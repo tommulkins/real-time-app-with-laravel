@@ -7,10 +7,13 @@
 import Vue from 'vue'
 import Vuetify from 'vuetify'
 import router from './router/router'
+import User from './helpers/User'
 
 require('./bootstrap')
 
 window.Vue = require('vue')
+window.User = User
+console.log(User.id())
 
 Vue.use(Vuetify)
 
