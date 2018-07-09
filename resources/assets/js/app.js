@@ -13,7 +13,7 @@ require('./bootstrap')
 
 window.Vue = require('vue')
 window.User = User
-console.log(User.id())
+window.EventBus = new Vue()
 
 Vue.use(Vuetify)
 
