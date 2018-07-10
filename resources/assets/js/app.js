@@ -8,14 +8,18 @@ import Vue from 'vue'
 import Vuetify from 'vuetify'
 import router from './router/router'
 import User from './helpers/User'
+import VueSimplemde from 'vue-simplemde'
+import md from 'marked'
 
 require('./bootstrap')
 
 window.Vue = require('vue')
 window.User = User
 window.EventBus = new Vue()
+window.md = md
 
 Vue.use(Vuetify)
+Vue.use(VueSimplemde)
 
 /**
  * Next, we will create a fresh Vue application instance and attach it to
