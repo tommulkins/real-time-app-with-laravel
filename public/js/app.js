@@ -65,13 +65,432 @@
 /************************************************************************/
 /******/ ([
 /* 0 */
+/***/ (function(module, exports) {
+
+/*
+	MIT License http://www.opensource.org/licenses/mit-license.php
+	Author Tobias Koppers @sokra
+*/
+// css base code, injected by the css-loader
+module.exports = function(useSourceMap) {
+	var list = [];
+
+	// return the list of modules as css string
+	list.toString = function toString() {
+		return this.map(function (item) {
+			var content = cssWithMappingToString(item, useSourceMap);
+			if(item[2]) {
+				return "@media " + item[2] + "{" + content + "}";
+			} else {
+				return content;
+			}
+		}).join("");
+	};
+
+	// import a list of modules into the list
+	list.i = function(modules, mediaQuery) {
+		if(typeof modules === "string")
+			modules = [[null, modules, ""]];
+		var alreadyImportedModules = {};
+		for(var i = 0; i < this.length; i++) {
+			var id = this[i][0];
+			if(typeof id === "number")
+				alreadyImportedModules[id] = true;
+		}
+		for(i = 0; i < modules.length; i++) {
+			var item = modules[i];
+			// skip already imported module
+			// this implementation is not 100% perfect for weird media query combinations
+			//  when a module is imported multiple times with different media queries.
+			//  I hope this will never occur (Hey this way we have smaller bundles)
+			if(typeof item[0] !== "number" || !alreadyImportedModules[item[0]]) {
+				if(mediaQuery && !item[2]) {
+					item[2] = mediaQuery;
+				} else if(mediaQuery) {
+					item[2] = "(" + item[2] + ") and (" + mediaQuery + ")";
+				}
+				list.push(item);
+			}
+		}
+	};
+	return list;
+};
+
+function cssWithMappingToString(item, useSourceMap) {
+	var content = item[1] || '';
+	var cssMapping = item[3];
+	if (!cssMapping) {
+		return content;
+	}
+
+	if (useSourceMap && typeof btoa === 'function') {
+		var sourceMapping = toComment(cssMapping);
+		var sourceURLs = cssMapping.sources.map(function (source) {
+			return '/*# sourceURL=' + cssMapping.sourceRoot + source + ' */'
+		});
+
+		return [content].concat(sourceURLs).concat([sourceMapping]).join('\n');
+	}
+
+	return [content].join('\n');
+}
+
+// Adapted from convert-source-map (MIT)
+function toComment(sourceMap) {
+	// eslint-disable-next-line no-undef
+	var base64 = btoa(unescape(encodeURIComponent(JSON.stringify(sourceMap))));
+	var data = 'sourceMappingURL=data:application/json;charset=utf-8;base64,' + base64;
+
+	return '/*# ' + data + ' */';
+}
+
+
+/***/ }),
+/* 1 */
+/***/ (function(module, exports, __webpack_require__) {
+
+/*
+  MIT License http://www.opensource.org/licenses/mit-license.php
+  Author Tobias Koppers @sokra
+  Modified by Evan You @yyx990803
+*/
+
+var hasDocument = typeof document !== 'undefined'
+
+if (typeof DEBUG !== 'undefined' && DEBUG) {
+  if (!hasDocument) {
+    throw new Error(
+    'vue-style-loader cannot be used in a non-browser environment. ' +
+    "Use { target: 'node' } in your Webpack config to indicate a server-rendering environment."
+  ) }
+}
+
+var listToStyles = __webpack_require__(30)
+
+/*
+type StyleObject = {
+  id: number;
+  parts: Array<StyleObjectPart>
+}
+
+type StyleObjectPart = {
+  css: string;
+  media: string;
+  sourceMap: ?string
+}
+*/
+
+var stylesInDom = {/*
+  [id: number]: {
+    id: number,
+    refs: number,
+    parts: Array<(obj?: StyleObjectPart) => void>
+  }
+*/}
+
+var head = hasDocument && (document.head || document.getElementsByTagName('head')[0])
+var singletonElement = null
+var singletonCounter = 0
+var isProduction = false
+var noop = function () {}
+var options = null
+var ssrIdKey = 'data-vue-ssr-id'
+
+// Force single-tag solution on IE6-9, which has a hard limit on the # of <style>
+// tags it will allow on a page
+var isOldIE = typeof navigator !== 'undefined' && /msie [6-9]\b/.test(navigator.userAgent.toLowerCase())
+
+module.exports = function (parentId, list, _isProduction, _options) {
+  isProduction = _isProduction
+
+  options = _options || {}
+
+  var styles = listToStyles(parentId, list)
+  addStylesToDom(styles)
+
+  return function update (newList) {
+    var mayRemove = []
+    for (var i = 0; i < styles.length; i++) {
+      var item = styles[i]
+      var domStyle = stylesInDom[item.id]
+      domStyle.refs--
+      mayRemove.push(domStyle)
+    }
+    if (newList) {
+      styles = listToStyles(parentId, newList)
+      addStylesToDom(styles)
+    } else {
+      styles = []
+    }
+    for (var i = 0; i < mayRemove.length; i++) {
+      var domStyle = mayRemove[i]
+      if (domStyle.refs === 0) {
+        for (var j = 0; j < domStyle.parts.length; j++) {
+          domStyle.parts[j]()
+        }
+        delete stylesInDom[domStyle.id]
+      }
+    }
+  }
+}
+
+function addStylesToDom (styles /* Array<StyleObject> */) {
+  for (var i = 0; i < styles.length; i++) {
+    var item = styles[i]
+    var domStyle = stylesInDom[item.id]
+    if (domStyle) {
+      domStyle.refs++
+      for (var j = 0; j < domStyle.parts.length; j++) {
+        domStyle.parts[j](item.parts[j])
+      }
+      for (; j < item.parts.length; j++) {
+        domStyle.parts.push(addStyle(item.parts[j]))
+      }
+      if (domStyle.parts.length > item.parts.length) {
+        domStyle.parts.length = item.parts.length
+      }
+    } else {
+      var parts = []
+      for (var j = 0; j < item.parts.length; j++) {
+        parts.push(addStyle(item.parts[j]))
+      }
+      stylesInDom[item.id] = { id: item.id, refs: 1, parts: parts }
+    }
+  }
+}
+
+function createStyleElement () {
+  var styleElement = document.createElement('style')
+  styleElement.type = 'text/css'
+  head.appendChild(styleElement)
+  return styleElement
+}
+
+function addStyle (obj /* StyleObjectPart */) {
+  var update, remove
+  var styleElement = document.querySelector('style[' + ssrIdKey + '~="' + obj.id + '"]')
+
+  if (styleElement) {
+    if (isProduction) {
+      // has SSR styles and in production mode.
+      // simply do nothing.
+      return noop
+    } else {
+      // has SSR styles but in dev mode.
+      // for some reason Chrome can't handle source map in server-rendered
+      // style tags - source maps in <style> only works if the style tag is
+      // created and inserted dynamically. So we remove the server rendered
+      // styles and inject new ones.
+      styleElement.parentNode.removeChild(styleElement)
+    }
+  }
+
+  if (isOldIE) {
+    // use singleton mode for IE9.
+    var styleIndex = singletonCounter++
+    styleElement = singletonElement || (singletonElement = createStyleElement())
+    update = applyToSingletonTag.bind(null, styleElement, styleIndex, false)
+    remove = applyToSingletonTag.bind(null, styleElement, styleIndex, true)
+  } else {
+    // use multi-style-tag mode in all other cases
+    styleElement = createStyleElement()
+    update = applyToTag.bind(null, styleElement)
+    remove = function () {
+      styleElement.parentNode.removeChild(styleElement)
+    }
+  }
+
+  update(obj)
+
+  return function updateStyle (newObj /* StyleObjectPart */) {
+    if (newObj) {
+      if (newObj.css === obj.css &&
+          newObj.media === obj.media &&
+          newObj.sourceMap === obj.sourceMap) {
+        return
+      }
+      update(obj = newObj)
+    } else {
+      remove()
+    }
+  }
+}
+
+var replaceText = (function () {
+  var textStore = []
+
+  return function (index, replacement) {
+    textStore[index] = replacement
+    return textStore.filter(Boolean).join('\n')
+  }
+})()
+
+function applyToSingletonTag (styleElement, index, remove, obj) {
+  var css = remove ? '' : obj.css
+
+  if (styleElement.styleSheet) {
+    styleElement.styleSheet.cssText = replaceText(index, css)
+  } else {
+    var cssNode = document.createTextNode(css)
+    var childNodes = styleElement.childNodes
+    if (childNodes[index]) styleElement.removeChild(childNodes[index])
+    if (childNodes.length) {
+      styleElement.insertBefore(cssNode, childNodes[index])
+    } else {
+      styleElement.appendChild(cssNode)
+    }
+  }
+}
+
+function applyToTag (styleElement, obj) {
+  var css = obj.css
+  var media = obj.media
+  var sourceMap = obj.sourceMap
+
+  if (media) {
+    styleElement.setAttribute('media', media)
+  }
+  if (options.ssrId) {
+    styleElement.setAttribute(ssrIdKey, obj.id)
+  }
+
+  if (sourceMap) {
+    // https://developer.chrome.com/devtools/docs/javascript-debugging
+    // this makes source maps inside style tags work properly in Chrome
+    css += '\n/*# sourceURL=' + sourceMap.sources[0] + ' */'
+    // http://stackoverflow.com/a/26603875
+    css += '\n/*# sourceMappingURL=data:application/json;base64,' + btoa(unescape(encodeURIComponent(JSON.stringify(sourceMap)))) + ' */'
+  }
+
+  if (styleElement.styleSheet) {
+    styleElement.styleSheet.cssText = css
+  } else {
+    while (styleElement.firstChild) {
+      styleElement.removeChild(styleElement.firstChild)
+    }
+    styleElement.appendChild(document.createTextNode(css))
+  }
+}
+
+
+/***/ }),
+/* 2 */
+/***/ (function(module, exports) {
+
+/* globals __VUE_SSR_CONTEXT__ */
+
+// IMPORTANT: Do NOT use ES2015 features in this file.
+// This module is a runtime utility for cleaner component module output and will
+// be included in the final webpack user bundle.
+
+module.exports = function normalizeComponent (
+  rawScriptExports,
+  compiledTemplate,
+  functionalTemplate,
+  injectStyles,
+  scopeId,
+  moduleIdentifier /* server only */
+) {
+  var esModule
+  var scriptExports = rawScriptExports = rawScriptExports || {}
+
+  // ES6 modules interop
+  var type = typeof rawScriptExports.default
+  if (type === 'object' || type === 'function') {
+    esModule = rawScriptExports
+    scriptExports = rawScriptExports.default
+  }
+
+  // Vue.extend constructor export interop
+  var options = typeof scriptExports === 'function'
+    ? scriptExports.options
+    : scriptExports
+
+  // render functions
+  if (compiledTemplate) {
+    options.render = compiledTemplate.render
+    options.staticRenderFns = compiledTemplate.staticRenderFns
+    options._compiled = true
+  }
+
+  // functional template
+  if (functionalTemplate) {
+    options.functional = true
+  }
+
+  // scopedId
+  if (scopeId) {
+    options._scopeId = scopeId
+  }
+
+  var hook
+  if (moduleIdentifier) { // server build
+    hook = function (context) {
+      // 2.3 injection
+      context =
+        context || // cached call
+        (this.$vnode && this.$vnode.ssrContext) || // stateful
+        (this.parent && this.parent.$vnode && this.parent.$vnode.ssrContext) // functional
+      // 2.2 with runInNewContext: true
+      if (!context && typeof __VUE_SSR_CONTEXT__ !== 'undefined') {
+        context = __VUE_SSR_CONTEXT__
+      }
+      // inject component styles
+      if (injectStyles) {
+        injectStyles.call(this, context)
+      }
+      // register component module identifier for async chunk inferrence
+      if (context && context._registeredComponents) {
+        context._registeredComponents.add(moduleIdentifier)
+      }
+    }
+    // used by ssr in case component is cached and beforeCreate
+    // never gets called
+    options._ssrRegister = hook
+  } else if (injectStyles) {
+    hook = injectStyles
+  }
+
+  if (hook) {
+    var functional = options.functional
+    var existing = functional
+      ? options.render
+      : options.beforeCreate
+
+    if (!functional) {
+      // inject component registration as beforeCreate hook
+      options.beforeCreate = existing
+        ? [].concat(existing, hook)
+        : [hook]
+    } else {
+      // for template-only hot-reload because in that case the render fn doesn't
+      // go through the normalizer
+      options._injectStyles = hook
+      // register for functioal component in vue file
+      options.render = function renderWithStyleInjection (h, context) {
+        hook.call(context)
+        return existing(h, context)
+      }
+    }
+  }
+
+  return {
+    esModule: esModule,
+    exports: scriptExports,
+    options: options
+  }
+}
+
+
+/***/ }),
+/* 3 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
 
 
 var bind = __webpack_require__(16);
-var isBuffer = __webpack_require__(93);
+var isBuffer = __webpack_require__(123);
 
 /*global toString:true*/
 
@@ -371,425 +790,6 @@ module.exports = {
   extend: extend,
   trim: trim
 };
-
-
-/***/ }),
-/* 1 */
-/***/ (function(module, exports) {
-
-/*
-	MIT License http://www.opensource.org/licenses/mit-license.php
-	Author Tobias Koppers @sokra
-*/
-// css base code, injected by the css-loader
-module.exports = function(useSourceMap) {
-	var list = [];
-
-	// return the list of modules as css string
-	list.toString = function toString() {
-		return this.map(function (item) {
-			var content = cssWithMappingToString(item, useSourceMap);
-			if(item[2]) {
-				return "@media " + item[2] + "{" + content + "}";
-			} else {
-				return content;
-			}
-		}).join("");
-	};
-
-	// import a list of modules into the list
-	list.i = function(modules, mediaQuery) {
-		if(typeof modules === "string")
-			modules = [[null, modules, ""]];
-		var alreadyImportedModules = {};
-		for(var i = 0; i < this.length; i++) {
-			var id = this[i][0];
-			if(typeof id === "number")
-				alreadyImportedModules[id] = true;
-		}
-		for(i = 0; i < modules.length; i++) {
-			var item = modules[i];
-			// skip already imported module
-			// this implementation is not 100% perfect for weird media query combinations
-			//  when a module is imported multiple times with different media queries.
-			//  I hope this will never occur (Hey this way we have smaller bundles)
-			if(typeof item[0] !== "number" || !alreadyImportedModules[item[0]]) {
-				if(mediaQuery && !item[2]) {
-					item[2] = mediaQuery;
-				} else if(mediaQuery) {
-					item[2] = "(" + item[2] + ") and (" + mediaQuery + ")";
-				}
-				list.push(item);
-			}
-		}
-	};
-	return list;
-};
-
-function cssWithMappingToString(item, useSourceMap) {
-	var content = item[1] || '';
-	var cssMapping = item[3];
-	if (!cssMapping) {
-		return content;
-	}
-
-	if (useSourceMap && typeof btoa === 'function') {
-		var sourceMapping = toComment(cssMapping);
-		var sourceURLs = cssMapping.sources.map(function (source) {
-			return '/*# sourceURL=' + cssMapping.sourceRoot + source + ' */'
-		});
-
-		return [content].concat(sourceURLs).concat([sourceMapping]).join('\n');
-	}
-
-	return [content].join('\n');
-}
-
-// Adapted from convert-source-map (MIT)
-function toComment(sourceMap) {
-	// eslint-disable-next-line no-undef
-	var base64 = btoa(unescape(encodeURIComponent(JSON.stringify(sourceMap))));
-	var data = 'sourceMappingURL=data:application/json;charset=utf-8;base64,' + base64;
-
-	return '/*# ' + data + ' */';
-}
-
-
-/***/ }),
-/* 2 */
-/***/ (function(module, exports, __webpack_require__) {
-
-/*
-  MIT License http://www.opensource.org/licenses/mit-license.php
-  Author Tobias Koppers @sokra
-  Modified by Evan You @yyx990803
-*/
-
-var hasDocument = typeof document !== 'undefined'
-
-if (typeof DEBUG !== 'undefined' && DEBUG) {
-  if (!hasDocument) {
-    throw new Error(
-    'vue-style-loader cannot be used in a non-browser environment. ' +
-    "Use { target: 'node' } in your Webpack config to indicate a server-rendering environment."
-  ) }
-}
-
-var listToStyles = __webpack_require__(30)
-
-/*
-type StyleObject = {
-  id: number;
-  parts: Array<StyleObjectPart>
-}
-
-type StyleObjectPart = {
-  css: string;
-  media: string;
-  sourceMap: ?string
-}
-*/
-
-var stylesInDom = {/*
-  [id: number]: {
-    id: number,
-    refs: number,
-    parts: Array<(obj?: StyleObjectPart) => void>
-  }
-*/}
-
-var head = hasDocument && (document.head || document.getElementsByTagName('head')[0])
-var singletonElement = null
-var singletonCounter = 0
-var isProduction = false
-var noop = function () {}
-var options = null
-var ssrIdKey = 'data-vue-ssr-id'
-
-// Force single-tag solution on IE6-9, which has a hard limit on the # of <style>
-// tags it will allow on a page
-var isOldIE = typeof navigator !== 'undefined' && /msie [6-9]\b/.test(navigator.userAgent.toLowerCase())
-
-module.exports = function (parentId, list, _isProduction, _options) {
-  isProduction = _isProduction
-
-  options = _options || {}
-
-  var styles = listToStyles(parentId, list)
-  addStylesToDom(styles)
-
-  return function update (newList) {
-    var mayRemove = []
-    for (var i = 0; i < styles.length; i++) {
-      var item = styles[i]
-      var domStyle = stylesInDom[item.id]
-      domStyle.refs--
-      mayRemove.push(domStyle)
-    }
-    if (newList) {
-      styles = listToStyles(parentId, newList)
-      addStylesToDom(styles)
-    } else {
-      styles = []
-    }
-    for (var i = 0; i < mayRemove.length; i++) {
-      var domStyle = mayRemove[i]
-      if (domStyle.refs === 0) {
-        for (var j = 0; j < domStyle.parts.length; j++) {
-          domStyle.parts[j]()
-        }
-        delete stylesInDom[domStyle.id]
-      }
-    }
-  }
-}
-
-function addStylesToDom (styles /* Array<StyleObject> */) {
-  for (var i = 0; i < styles.length; i++) {
-    var item = styles[i]
-    var domStyle = stylesInDom[item.id]
-    if (domStyle) {
-      domStyle.refs++
-      for (var j = 0; j < domStyle.parts.length; j++) {
-        domStyle.parts[j](item.parts[j])
-      }
-      for (; j < item.parts.length; j++) {
-        domStyle.parts.push(addStyle(item.parts[j]))
-      }
-      if (domStyle.parts.length > item.parts.length) {
-        domStyle.parts.length = item.parts.length
-      }
-    } else {
-      var parts = []
-      for (var j = 0; j < item.parts.length; j++) {
-        parts.push(addStyle(item.parts[j]))
-      }
-      stylesInDom[item.id] = { id: item.id, refs: 1, parts: parts }
-    }
-  }
-}
-
-function createStyleElement () {
-  var styleElement = document.createElement('style')
-  styleElement.type = 'text/css'
-  head.appendChild(styleElement)
-  return styleElement
-}
-
-function addStyle (obj /* StyleObjectPart */) {
-  var update, remove
-  var styleElement = document.querySelector('style[' + ssrIdKey + '~="' + obj.id + '"]')
-
-  if (styleElement) {
-    if (isProduction) {
-      // has SSR styles and in production mode.
-      // simply do nothing.
-      return noop
-    } else {
-      // has SSR styles but in dev mode.
-      // for some reason Chrome can't handle source map in server-rendered
-      // style tags - source maps in <style> only works if the style tag is
-      // created and inserted dynamically. So we remove the server rendered
-      // styles and inject new ones.
-      styleElement.parentNode.removeChild(styleElement)
-    }
-  }
-
-  if (isOldIE) {
-    // use singleton mode for IE9.
-    var styleIndex = singletonCounter++
-    styleElement = singletonElement || (singletonElement = createStyleElement())
-    update = applyToSingletonTag.bind(null, styleElement, styleIndex, false)
-    remove = applyToSingletonTag.bind(null, styleElement, styleIndex, true)
-  } else {
-    // use multi-style-tag mode in all other cases
-    styleElement = createStyleElement()
-    update = applyToTag.bind(null, styleElement)
-    remove = function () {
-      styleElement.parentNode.removeChild(styleElement)
-    }
-  }
-
-  update(obj)
-
-  return function updateStyle (newObj /* StyleObjectPart */) {
-    if (newObj) {
-      if (newObj.css === obj.css &&
-          newObj.media === obj.media &&
-          newObj.sourceMap === obj.sourceMap) {
-        return
-      }
-      update(obj = newObj)
-    } else {
-      remove()
-    }
-  }
-}
-
-var replaceText = (function () {
-  var textStore = []
-
-  return function (index, replacement) {
-    textStore[index] = replacement
-    return textStore.filter(Boolean).join('\n')
-  }
-})()
-
-function applyToSingletonTag (styleElement, index, remove, obj) {
-  var css = remove ? '' : obj.css
-
-  if (styleElement.styleSheet) {
-    styleElement.styleSheet.cssText = replaceText(index, css)
-  } else {
-    var cssNode = document.createTextNode(css)
-    var childNodes = styleElement.childNodes
-    if (childNodes[index]) styleElement.removeChild(childNodes[index])
-    if (childNodes.length) {
-      styleElement.insertBefore(cssNode, childNodes[index])
-    } else {
-      styleElement.appendChild(cssNode)
-    }
-  }
-}
-
-function applyToTag (styleElement, obj) {
-  var css = obj.css
-  var media = obj.media
-  var sourceMap = obj.sourceMap
-
-  if (media) {
-    styleElement.setAttribute('media', media)
-  }
-  if (options.ssrId) {
-    styleElement.setAttribute(ssrIdKey, obj.id)
-  }
-
-  if (sourceMap) {
-    // https://developer.chrome.com/devtools/docs/javascript-debugging
-    // this makes source maps inside style tags work properly in Chrome
-    css += '\n/*# sourceURL=' + sourceMap.sources[0] + ' */'
-    // http://stackoverflow.com/a/26603875
-    css += '\n/*# sourceMappingURL=data:application/json;base64,' + btoa(unescape(encodeURIComponent(JSON.stringify(sourceMap)))) + ' */'
-  }
-
-  if (styleElement.styleSheet) {
-    styleElement.styleSheet.cssText = css
-  } else {
-    while (styleElement.firstChild) {
-      styleElement.removeChild(styleElement.firstChild)
-    }
-    styleElement.appendChild(document.createTextNode(css))
-  }
-}
-
-
-/***/ }),
-/* 3 */
-/***/ (function(module, exports) {
-
-/* globals __VUE_SSR_CONTEXT__ */
-
-// IMPORTANT: Do NOT use ES2015 features in this file.
-// This module is a runtime utility for cleaner component module output and will
-// be included in the final webpack user bundle.
-
-module.exports = function normalizeComponent (
-  rawScriptExports,
-  compiledTemplate,
-  functionalTemplate,
-  injectStyles,
-  scopeId,
-  moduleIdentifier /* server only */
-) {
-  var esModule
-  var scriptExports = rawScriptExports = rawScriptExports || {}
-
-  // ES6 modules interop
-  var type = typeof rawScriptExports.default
-  if (type === 'object' || type === 'function') {
-    esModule = rawScriptExports
-    scriptExports = rawScriptExports.default
-  }
-
-  // Vue.extend constructor export interop
-  var options = typeof scriptExports === 'function'
-    ? scriptExports.options
-    : scriptExports
-
-  // render functions
-  if (compiledTemplate) {
-    options.render = compiledTemplate.render
-    options.staticRenderFns = compiledTemplate.staticRenderFns
-    options._compiled = true
-  }
-
-  // functional template
-  if (functionalTemplate) {
-    options.functional = true
-  }
-
-  // scopedId
-  if (scopeId) {
-    options._scopeId = scopeId
-  }
-
-  var hook
-  if (moduleIdentifier) { // server build
-    hook = function (context) {
-      // 2.3 injection
-      context =
-        context || // cached call
-        (this.$vnode && this.$vnode.ssrContext) || // stateful
-        (this.parent && this.parent.$vnode && this.parent.$vnode.ssrContext) // functional
-      // 2.2 with runInNewContext: true
-      if (!context && typeof __VUE_SSR_CONTEXT__ !== 'undefined') {
-        context = __VUE_SSR_CONTEXT__
-      }
-      // inject component styles
-      if (injectStyles) {
-        injectStyles.call(this, context)
-      }
-      // register component module identifier for async chunk inferrence
-      if (context && context._registeredComponents) {
-        context._registeredComponents.add(moduleIdentifier)
-      }
-    }
-    // used by ssr in case component is cached and beforeCreate
-    // never gets called
-    options._ssrRegister = hook
-  } else if (injectStyles) {
-    hook = injectStyles
-  }
-
-  if (hook) {
-    var functional = options.functional
-    var existing = functional
-      ? options.render
-      : options.beforeCreate
-
-    if (!functional) {
-      // inject component registration as beforeCreate hook
-      options.beforeCreate = existing
-        ? [].concat(existing, hook)
-        : [hook]
-    } else {
-      // for template-only hot-reload because in that case the render fn doesn't
-      // go through the normalizer
-      options._injectStyles = hook
-      // register for functioal component in vue file
-      options.render = function renderWithStyleInjection (h, context) {
-        hook.call(context)
-        return existing(h, context)
-      }
-    }
-  }
-
-  return {
-    esModule: esModule,
-    exports: scriptExports,
-    options: options
-  }
-}
 
 
 /***/ }),
@@ -21490,1742 +21490,6 @@ module.exports = Vue;
 /* 7 */
 /***/ (function(module, exports, __webpack_require__) {
 
-"use strict";
-/* WEBPACK VAR INJECTION */(function(process) {
-
-var utils = __webpack_require__(0);
-var normalizeHeaderName = __webpack_require__(95);
-
-var DEFAULT_CONTENT_TYPE = {
-  'Content-Type': 'application/x-www-form-urlencoded'
-};
-
-function setContentTypeIfUnset(headers, value) {
-  if (!utils.isUndefined(headers) && utils.isUndefined(headers['Content-Type'])) {
-    headers['Content-Type'] = value;
-  }
-}
-
-function getDefaultAdapter() {
-  var adapter;
-  if (typeof XMLHttpRequest !== 'undefined') {
-    // For browsers use XHR adapter
-    adapter = __webpack_require__(17);
-  } else if (typeof process !== 'undefined') {
-    // For node use HTTP adapter
-    adapter = __webpack_require__(17);
-  }
-  return adapter;
-}
-
-var defaults = {
-  adapter: getDefaultAdapter(),
-
-  transformRequest: [function transformRequest(data, headers) {
-    normalizeHeaderName(headers, 'Content-Type');
-    if (utils.isFormData(data) ||
-      utils.isArrayBuffer(data) ||
-      utils.isBuffer(data) ||
-      utils.isStream(data) ||
-      utils.isFile(data) ||
-      utils.isBlob(data)
-    ) {
-      return data;
-    }
-    if (utils.isArrayBufferView(data)) {
-      return data.buffer;
-    }
-    if (utils.isURLSearchParams(data)) {
-      setContentTypeIfUnset(headers, 'application/x-www-form-urlencoded;charset=utf-8');
-      return data.toString();
-    }
-    if (utils.isObject(data)) {
-      setContentTypeIfUnset(headers, 'application/json;charset=utf-8');
-      return JSON.stringify(data);
-    }
-    return data;
-  }],
-
-  transformResponse: [function transformResponse(data) {
-    /*eslint no-param-reassign:0*/
-    if (typeof data === 'string') {
-      try {
-        data = JSON.parse(data);
-      } catch (e) { /* Ignore */ }
-    }
-    return data;
-  }],
-
-  /**
-   * A timeout in milliseconds to abort a request. If set to 0 (default) a
-   * timeout is not created.
-   */
-  timeout: 0,
-
-  xsrfCookieName: 'XSRF-TOKEN',
-  xsrfHeaderName: 'X-XSRF-TOKEN',
-
-  maxContentLength: -1,
-
-  validateStatus: function validateStatus(status) {
-    return status >= 200 && status < 300;
-  }
-};
-
-defaults.headers = {
-  common: {
-    'Accept': 'application/json, text/plain, */*'
-  }
-};
-
-utils.forEach(['delete', 'get', 'head'], function forEachMethodNoData(method) {
-  defaults.headers[method] = {};
-});
-
-utils.forEach(['post', 'put', 'patch'], function forEachMethodWithData(method) {
-  defaults.headers[method] = utils.merge(DEFAULT_CONTENT_TYPE);
-});
-
-module.exports = defaults;
-
-/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(8)))
-
-/***/ }),
-/* 8 */
-/***/ (function(module, exports) {
-
-// shim for using process in browser
-var process = module.exports = {};
-
-// cached from whatever global is present so that test runners that stub it
-// don't break things.  But we need to wrap it in a try catch in case it is
-// wrapped in strict mode code which doesn't define any globals.  It's inside a
-// function because try/catches deoptimize in certain engines.
-
-var cachedSetTimeout;
-var cachedClearTimeout;
-
-function defaultSetTimout() {
-    throw new Error('setTimeout has not been defined');
-}
-function defaultClearTimeout () {
-    throw new Error('clearTimeout has not been defined');
-}
-(function () {
-    try {
-        if (typeof setTimeout === 'function') {
-            cachedSetTimeout = setTimeout;
-        } else {
-            cachedSetTimeout = defaultSetTimout;
-        }
-    } catch (e) {
-        cachedSetTimeout = defaultSetTimout;
-    }
-    try {
-        if (typeof clearTimeout === 'function') {
-            cachedClearTimeout = clearTimeout;
-        } else {
-            cachedClearTimeout = defaultClearTimeout;
-        }
-    } catch (e) {
-        cachedClearTimeout = defaultClearTimeout;
-    }
-} ())
-function runTimeout(fun) {
-    if (cachedSetTimeout === setTimeout) {
-        //normal enviroments in sane situations
-        return setTimeout(fun, 0);
-    }
-    // if setTimeout wasn't available but was latter defined
-    if ((cachedSetTimeout === defaultSetTimout || !cachedSetTimeout) && setTimeout) {
-        cachedSetTimeout = setTimeout;
-        return setTimeout(fun, 0);
-    }
-    try {
-        // when when somebody has screwed with setTimeout but no I.E. maddness
-        return cachedSetTimeout(fun, 0);
-    } catch(e){
-        try {
-            // When we are in I.E. but the script has been evaled so I.E. doesn't trust the global object when called normally
-            return cachedSetTimeout.call(null, fun, 0);
-        } catch(e){
-            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error
-            return cachedSetTimeout.call(this, fun, 0);
-        }
-    }
-
-
-}
-function runClearTimeout(marker) {
-    if (cachedClearTimeout === clearTimeout) {
-        //normal enviroments in sane situations
-        return clearTimeout(marker);
-    }
-    // if clearTimeout wasn't available but was latter defined
-    if ((cachedClearTimeout === defaultClearTimeout || !cachedClearTimeout) && clearTimeout) {
-        cachedClearTimeout = clearTimeout;
-        return clearTimeout(marker);
-    }
-    try {
-        // when when somebody has screwed with setTimeout but no I.E. maddness
-        return cachedClearTimeout(marker);
-    } catch (e){
-        try {
-            // When we are in I.E. but the script has been evaled so I.E. doesn't  trust the global object when called normally
-            return cachedClearTimeout.call(null, marker);
-        } catch (e){
-            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error.
-            // Some versions of I.E. have different rules for clearTimeout vs setTimeout
-            return cachedClearTimeout.call(this, marker);
-        }
-    }
-
-
-
-}
-var queue = [];
-var draining = false;
-var currentQueue;
-var queueIndex = -1;
-
-function cleanUpNextTick() {
-    if (!draining || !currentQueue) {
-        return;
-    }
-    draining = false;
-    if (currentQueue.length) {
-        queue = currentQueue.concat(queue);
-    } else {
-        queueIndex = -1;
-    }
-    if (queue.length) {
-        drainQueue();
-    }
-}
-
-function drainQueue() {
-    if (draining) {
-        return;
-    }
-    var timeout = runTimeout(cleanUpNextTick);
-    draining = true;
-
-    var len = queue.length;
-    while(len) {
-        currentQueue = queue;
-        queue = [];
-        while (++queueIndex < len) {
-            if (currentQueue) {
-                currentQueue[queueIndex].run();
-            }
-        }
-        queueIndex = -1;
-        len = queue.length;
-    }
-    currentQueue = null;
-    draining = false;
-    runClearTimeout(timeout);
-}
-
-process.nextTick = function (fun) {
-    var args = new Array(arguments.length - 1);
-    if (arguments.length > 1) {
-        for (var i = 1; i < arguments.length; i++) {
-            args[i - 1] = arguments[i];
-        }
-    }
-    queue.push(new Item(fun, args));
-    if (queue.length === 1 && !draining) {
-        runTimeout(drainQueue);
-    }
-};
-
-// v8 likes predictible objects
-function Item(fun, array) {
-    this.fun = fun;
-    this.array = array;
-}
-Item.prototype.run = function () {
-    this.fun.apply(null, this.array);
-};
-process.title = 'browser';
-process.browser = true;
-process.env = {};
-process.argv = [];
-process.version = ''; // empty string to avoid regexp issues
-process.versions = {};
-
-function noop() {}
-
-process.on = noop;
-process.addListener = noop;
-process.once = noop;
-process.off = noop;
-process.removeListener = noop;
-process.removeAllListeners = noop;
-process.emit = noop;
-process.prependListener = noop;
-process.prependOnceListener = noop;
-
-process.listeners = function (name) { return [] }
-
-process.binding = function (name) {
-    throw new Error('process.binding is not supported');
-};
-
-process.cwd = function () { return '/' };
-process.chdir = function (dir) {
-    throw new Error('process.chdir is not supported');
-};
-process.umask = function() { return 0; };
-
-
-/***/ }),
-/* 9 */
-/***/ (function(module, exports, __webpack_require__) {
-
-var disposed = false
-function injectStyle (ssrContext) {
-  if (disposed) return
-  __webpack_require__(28)
-}
-var normalizeComponent = __webpack_require__(3)
-/* script */
-var __vue_script__ = __webpack_require__(31)
-/* template */
-var __vue_template__ = __webpack_require__(32)
-/* template functional */
-var __vue_template_functional__ = false
-/* styles */
-var __vue_styles__ = injectStyle
-/* scopeId */
-var __vue_scopeId__ = "data-v-ba0d9948"
-/* moduleIdentifier (server only) */
-var __vue_module_identifier__ = null
-var Component = normalizeComponent(
-  __vue_script__,
-  __vue_template__,
-  __vue_template_functional__,
-  __vue_styles__,
-  __vue_scopeId__,
-  __vue_module_identifier__
-)
-Component.options.__file = "resources/assets/js/components/login/Login.vue"
-
-/* hot reload */
-if (false) {(function () {
-  var hotAPI = require("vue-hot-reload-api")
-  hotAPI.install(require("vue"), false)
-  if (!hotAPI.compatible) return
-  module.hot.accept()
-  if (!module.hot.data) {
-    hotAPI.createRecord("data-v-ba0d9948", Component.options)
-  } else {
-    hotAPI.reload("data-v-ba0d9948", Component.options)
-  }
-  module.hot.dispose(function (data) {
-    disposed = true
-  })
-})()}
-
-module.exports = Component.exports
-
-
-/***/ }),
-/* 10 */
-/***/ (function(module, exports, __webpack_require__) {
-
-// CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: http://codemirror.net/LICENSE
-
-(function(mod) {
-  if (true) // CommonJS
-    mod(__webpack_require__(4), __webpack_require__(11), __webpack_require__(76));
-  else if (typeof define == "function" && define.amd) // AMD
-    define(["../../lib/codemirror", "../xml/xml", "../meta"], mod);
-  else // Plain browser env
-    mod(CodeMirror);
-})(function(CodeMirror) {
-"use strict";
-
-CodeMirror.defineMode("markdown", function(cmCfg, modeCfg) {
-
-  var htmlMode = CodeMirror.getMode(cmCfg, "text/html");
-  var htmlModeMissing = htmlMode.name == "null"
-
-  function getMode(name) {
-    if (CodeMirror.findModeByName) {
-      var found = CodeMirror.findModeByName(name);
-      if (found) name = found.mime || found.mimes[0];
-    }
-    var mode = CodeMirror.getMode(cmCfg, name);
-    return mode.name == "null" ? null : mode;
-  }
-
-  // Should characters that affect highlighting be highlighted separate?
-  // Does not include characters that will be output (such as `1.` and `-` for lists)
-  if (modeCfg.highlightFormatting === undefined)
-    modeCfg.highlightFormatting = false;
-
-  // Maximum number of nested blockquotes. Set to 0 for infinite nesting.
-  // Excess `>` will emit `error` token.
-  if (modeCfg.maxBlockquoteDepth === undefined)
-    modeCfg.maxBlockquoteDepth = 0;
-
-  // Turn on task lists? ("- [ ] " and "- [x] ")
-  if (modeCfg.taskLists === undefined) modeCfg.taskLists = false;
-
-  // Turn on strikethrough syntax
-  if (modeCfg.strikethrough === undefined)
-    modeCfg.strikethrough = false;
-
-  if (modeCfg.emoji === undefined)
-    modeCfg.emoji = false;
-
-  if (modeCfg.fencedCodeBlockHighlighting === undefined)
-    modeCfg.fencedCodeBlockHighlighting = true;
-
-  if (modeCfg.xml === undefined)
-    modeCfg.xml = true;
-
-  // Allow token types to be overridden by user-provided token types.
-  if (modeCfg.tokenTypeOverrides === undefined)
-    modeCfg.tokenTypeOverrides = {};
-
-  var tokenTypes = {
-    header: "header",
-    code: "comment",
-    quote: "quote",
-    list1: "variable-2",
-    list2: "variable-3",
-    list3: "keyword",
-    hr: "hr",
-    image: "image",
-    imageAltText: "image-alt-text",
-    imageMarker: "image-marker",
-    formatting: "formatting",
-    linkInline: "link",
-    linkEmail: "link",
-    linkText: "link",
-    linkHref: "string",
-    em: "em",
-    strong: "strong",
-    strikethrough: "strikethrough",
-    emoji: "builtin"
-  };
-
-  for (var tokenType in tokenTypes) {
-    if (tokenTypes.hasOwnProperty(tokenType) && modeCfg.tokenTypeOverrides[tokenType]) {
-      tokenTypes[tokenType] = modeCfg.tokenTypeOverrides[tokenType];
-    }
-  }
-
-  var hrRE = /^([*\-_])(?:\s*\1){2,}\s*$/
-  ,   listRE = /^(?:[*\-+]|^[0-9]+([.)]))\s+/
-  ,   taskListRE = /^\[(x| )\](?=\s)/i // Must follow listRE
-  ,   atxHeaderRE = modeCfg.allowAtxHeaderWithoutSpace ? /^(#+)/ : /^(#+)(?: |$)/
-  ,   setextHeaderRE = /^ *(?:\={1,}|-{1,})\s*$/
-  ,   textRE = /^[^#!\[\]*_\\<>` "'(~:]+/
-  ,   fencedCodeRE = /^(~~~+|```+)[ \t]*([\w+#-]*)[^\n`]*$/
-  ,   linkDefRE = /^\s*\[[^\]]+?\]:.*$/ // naive link-definition
-  ,   punctuation = /[!\"#$%&\'()*+,\-\.\/:;<=>?@\[\\\]^_`{|}~—]/
-  ,   expandedTab = "    " // CommonMark specifies tab as 4 spaces
-
-  function switchInline(stream, state, f) {
-    state.f = state.inline = f;
-    return f(stream, state);
-  }
-
-  function switchBlock(stream, state, f) {
-    state.f = state.block = f;
-    return f(stream, state);
-  }
-
-  function lineIsEmpty(line) {
-    return !line || !/\S/.test(line.string)
-  }
-
-  // Blocks
-
-  function blankLine(state) {
-    // Reset linkTitle state
-    state.linkTitle = false;
-    state.linkHref = false;
-    state.linkText = false;
-    // Reset EM state
-    state.em = false;
-    // Reset STRONG state
-    state.strong = false;
-    // Reset strikethrough state
-    state.strikethrough = false;
-    // Reset state.quote
-    state.quote = 0;
-    // Reset state.indentedCode
-    state.indentedCode = false;
-    if (state.f == htmlBlock) {
-      var exit = htmlModeMissing
-      if (!exit) {
-        var inner = CodeMirror.innerMode(htmlMode, state.htmlState)
-        exit = inner.mode.name == "xml" && inner.state.tagStart === null &&
-          (!inner.state.context && inner.state.tokenize.isInText)
-      }
-      if (exit) {
-        state.f = inlineNormal;
-        state.block = blockNormal;
-        state.htmlState = null;
-      }
-    }
-    // Reset state.trailingSpace
-    state.trailingSpace = 0;
-    state.trailingSpaceNewLine = false;
-    // Mark this line as blank
-    state.prevLine = state.thisLine
-    state.thisLine = {stream: null}
-    return null;
-  }
-
-  function blockNormal(stream, state) {
-    var firstTokenOnLine = stream.column() === state.indentation;
-    var prevLineLineIsEmpty = lineIsEmpty(state.prevLine.stream);
-    var prevLineIsIndentedCode = state.indentedCode;
-    var prevLineIsHr = state.prevLine.hr;
-    var prevLineIsList = state.list !== false;
-    var maxNonCodeIndentation = (state.listStack[state.listStack.length - 1] || 0) + 3;
-
-    state.indentedCode = false;
-
-    var lineIndentation = state.indentation;
-    // compute once per line (on first token)
-    if (state.indentationDiff === null) {
-      state.indentationDiff = state.indentation;
-      if (prevLineIsList) {
-        // Reset inline styles which shouldn't propagate aross list items
-        state.em = false;
-        state.strong = false;
-        state.code = false;
-        state.strikethrough = false;
-
-        state.list = null;
-        // While this list item's marker's indentation is less than the deepest
-        //  list item's content's indentation,pop the deepest list item
-        //  indentation off the stack, and update block indentation state
-        while (lineIndentation < state.listStack[state.listStack.length - 1]) {
-          state.listStack.pop();
-          if (state.listStack.length) {
-            state.indentation = state.listStack[state.listStack.length - 1];
-          // less than the first list's indent -> the line is no longer a list
-          } else {
-            state.list = false;
-          }
-        }
-        if (state.list !== false) {
-          state.indentationDiff = lineIndentation - state.listStack[state.listStack.length - 1]
-        }
-      }
-    }
-
-    // not comprehensive (currently only for setext detection purposes)
-    var allowsInlineContinuation = (
-        !prevLineLineIsEmpty && !prevLineIsHr && !state.prevLine.header &&
-        (!prevLineIsList || !prevLineIsIndentedCode) &&
-        !state.prevLine.fencedCodeEnd
-    );
-
-    var isHr = (state.list === false || prevLineIsHr || prevLineLineIsEmpty) &&
-      state.indentation <= maxNonCodeIndentation && stream.match(hrRE);
-
-    var match = null;
-    if (state.indentationDiff >= 4 && (prevLineIsIndentedCode || state.prevLine.fencedCodeEnd ||
-         state.prevLine.header || prevLineLineIsEmpty)) {
-      stream.skipToEnd();
-      state.indentedCode = true;
-      return tokenTypes.code;
-    } else if (stream.eatSpace()) {
-      return null;
-    } else if (firstTokenOnLine && state.indentation <= maxNonCodeIndentation && (match = stream.match(atxHeaderRE)) && match[1].length <= 6) {
-      state.quote = 0;
-      state.header = match[1].length;
-      state.thisLine.header = true;
-      if (modeCfg.highlightFormatting) state.formatting = "header";
-      state.f = state.inline;
-      return getType(state);
-    } else if (state.indentation <= maxNonCodeIndentation && stream.eat('>')) {
-      state.quote = firstTokenOnLine ? 1 : state.quote + 1;
-      if (modeCfg.highlightFormatting) state.formatting = "quote";
-      stream.eatSpace();
-      return getType(state);
-    } else if (!isHr && !state.setext && firstTokenOnLine && state.indentation <= maxNonCodeIndentation && (match = stream.match(listRE))) {
-      var listType = match[1] ? "ol" : "ul";
-
-      state.indentation = lineIndentation + stream.current().length;
-      state.list = true;
-      state.quote = 0;
-
-      // Add this list item's content's indentation to the stack
-      state.listStack.push(state.indentation);
-
-      if (modeCfg.taskLists && stream.match(taskListRE, false)) {
-        state.taskList = true;
-      }
-      state.f = state.inline;
-      if (modeCfg.highlightFormatting) state.formatting = ["list", "list-" + listType];
-      return getType(state);
-    } else if (firstTokenOnLine && state.indentation <= maxNonCodeIndentation && (match = stream.match(fencedCodeRE, true))) {
-      state.quote = 0;
-      state.fencedEndRE = new RegExp(match[1] + "+ *$");
-      // try switching mode
-      state.localMode = modeCfg.fencedCodeBlockHighlighting && getMode(match[2]);
-      if (state.localMode) state.localState = CodeMirror.startState(state.localMode);
-      state.f = state.block = local;
-      if (modeCfg.highlightFormatting) state.formatting = "code-block";
-      state.code = -1
-      return getType(state);
-    // SETEXT has lowest block-scope precedence after HR, so check it after
-    //  the others (code, blockquote, list...)
-    } else if (
-      // if setext set, indicates line after ---/===
-      state.setext || (
-        // line before ---/===
-        (!allowsInlineContinuation || !prevLineIsList) && !state.quote && state.list === false &&
-        !state.code && !isHr && !linkDefRE.test(stream.string) &&
-        (match = stream.lookAhead(1)) && (match = match.match(setextHeaderRE))
-      )
-    ) {
-      if ( !state.setext ) {
-        state.header = match[0].charAt(0) == '=' ? 1 : 2;
-        state.setext = state.header;
-      } else {
-        state.header = state.setext;
-        // has no effect on type so we can reset it now
-        state.setext = 0;
-        stream.skipToEnd();
-        if (modeCfg.highlightFormatting) state.formatting = "header";
-      }
-      state.thisLine.header = true;
-      state.f = state.inline;
-      return getType(state);
-    } else if (isHr) {
-      stream.skipToEnd();
-      state.hr = true;
-      state.thisLine.hr = true;
-      return tokenTypes.hr;
-    } else if (stream.peek() === '[') {
-      return switchInline(stream, state, footnoteLink);
-    }
-
-    return switchInline(stream, state, state.inline);
-  }
-
-  function htmlBlock(stream, state) {
-    var style = htmlMode.token(stream, state.htmlState);
-    if (!htmlModeMissing) {
-      var inner = CodeMirror.innerMode(htmlMode, state.htmlState)
-      if ((inner.mode.name == "xml" && inner.state.tagStart === null &&
-           (!inner.state.context && inner.state.tokenize.isInText)) ||
-          (state.md_inside && stream.current().indexOf(">") > -1)) {
-        state.f = inlineNormal;
-        state.block = blockNormal;
-        state.htmlState = null;
-      }
-    }
-    return style;
-  }
-
-  function local(stream, state) {
-    var currListInd = state.listStack[state.listStack.length - 1] || 0;
-    var hasExitedList = state.indentation < currListInd;
-    var maxFencedEndInd = currListInd + 3;
-    if (state.fencedEndRE && state.indentation <= maxFencedEndInd && (hasExitedList || stream.match(state.fencedEndRE))) {
-      if (modeCfg.highlightFormatting) state.formatting = "code-block";
-      var returnType;
-      if (!hasExitedList) returnType = getType(state)
-      state.localMode = state.localState = null;
-      state.block = blockNormal;
-      state.f = inlineNormal;
-      state.fencedEndRE = null;
-      state.code = 0
-      state.thisLine.fencedCodeEnd = true;
-      if (hasExitedList) return switchBlock(stream, state, state.block);
-      return returnType;
-    } else if (state.localMode) {
-      return state.localMode.token(stream, state.localState);
-    } else {
-      stream.skipToEnd();
-      return tokenTypes.code;
-    }
-  }
-
-  // Inline
-  function getType(state) {
-    var styles = [];
-
-    if (state.formatting) {
-      styles.push(tokenTypes.formatting);
-
-      if (typeof state.formatting === "string") state.formatting = [state.formatting];
-
-      for (var i = 0; i < state.formatting.length; i++) {
-        styles.push(tokenTypes.formatting + "-" + state.formatting[i]);
-
-        if (state.formatting[i] === "header") {
-          styles.push(tokenTypes.formatting + "-" + state.formatting[i] + "-" + state.header);
-        }
-
-        // Add `formatting-quote` and `formatting-quote-#` for blockquotes
-        // Add `error` instead if the maximum blockquote nesting depth is passed
-        if (state.formatting[i] === "quote") {
-          if (!modeCfg.maxBlockquoteDepth || modeCfg.maxBlockquoteDepth >= state.quote) {
-            styles.push(tokenTypes.formatting + "-" + state.formatting[i] + "-" + state.quote);
-          } else {
-            styles.push("error");
-          }
-        }
-      }
-    }
-
-    if (state.taskOpen) {
-      styles.push("meta");
-      return styles.length ? styles.join(' ') : null;
-    }
-    if (state.taskClosed) {
-      styles.push("property");
-      return styles.length ? styles.join(' ') : null;
-    }
-
-    if (state.linkHref) {
-      styles.push(tokenTypes.linkHref, "url");
-    } else { // Only apply inline styles to non-url text
-      if (state.strong) { styles.push(tokenTypes.strong); }
-      if (state.em) { styles.push(tokenTypes.em); }
-      if (state.strikethrough) { styles.push(tokenTypes.strikethrough); }
-      if (state.emoji) { styles.push(tokenTypes.emoji); }
-      if (state.linkText) { styles.push(tokenTypes.linkText); }
-      if (state.code) { styles.push(tokenTypes.code); }
-      if (state.image) { styles.push(tokenTypes.image); }
-      if (state.imageAltText) { styles.push(tokenTypes.imageAltText, "link"); }
-      if (state.imageMarker) { styles.push(tokenTypes.imageMarker); }
-    }
-
-    if (state.header) { styles.push(tokenTypes.header, tokenTypes.header + "-" + state.header); }
-
-    if (state.quote) {
-      styles.push(tokenTypes.quote);
-
-      // Add `quote-#` where the maximum for `#` is modeCfg.maxBlockquoteDepth
-      if (!modeCfg.maxBlockquoteDepth || modeCfg.maxBlockquoteDepth >= state.quote) {
-        styles.push(tokenTypes.quote + "-" + state.quote);
-      } else {
-        styles.push(tokenTypes.quote + "-" + modeCfg.maxBlockquoteDepth);
-      }
-    }
-
-    if (state.list !== false) {
-      var listMod = (state.listStack.length - 1) % 3;
-      if (!listMod) {
-        styles.push(tokenTypes.list1);
-      } else if (listMod === 1) {
-        styles.push(tokenTypes.list2);
-      } else {
-        styles.push(tokenTypes.list3);
-      }
-    }
-
-    if (state.trailingSpaceNewLine) {
-      styles.push("trailing-space-new-line");
-    } else if (state.trailingSpace) {
-      styles.push("trailing-space-" + (state.trailingSpace % 2 ? "a" : "b"));
-    }
-
-    return styles.length ? styles.join(' ') : null;
-  }
-
-  function handleText(stream, state) {
-    if (stream.match(textRE, true)) {
-      return getType(state);
-    }
-    return undefined;
-  }
-
-  function inlineNormal(stream, state) {
-    var style = state.text(stream, state);
-    if (typeof style !== 'undefined')
-      return style;
-
-    if (state.list) { // List marker (*, +, -, 1., etc)
-      state.list = null;
-      return getType(state);
-    }
-
-    if (state.taskList) {
-      var taskOpen = stream.match(taskListRE, true)[1] === " ";
-      if (taskOpen) state.taskOpen = true;
-      else state.taskClosed = true;
-      if (modeCfg.highlightFormatting) state.formatting = "task";
-      state.taskList = false;
-      return getType(state);
-    }
-
-    state.taskOpen = false;
-    state.taskClosed = false;
-
-    if (state.header && stream.match(/^#+$/, true)) {
-      if (modeCfg.highlightFormatting) state.formatting = "header";
-      return getType(state);
-    }
-
-    var ch = stream.next();
-
-    // Matches link titles present on next line
-    if (state.linkTitle) {
-      state.linkTitle = false;
-      var matchCh = ch;
-      if (ch === '(') {
-        matchCh = ')';
-      }
-      matchCh = (matchCh+'').replace(/([.?*+^\[\]\\(){}|-])/g, "\\$1");
-      var regex = '^\\s*(?:[^' + matchCh + '\\\\]+|\\\\\\\\|\\\\.)' + matchCh;
-      if (stream.match(new RegExp(regex), true)) {
-        return tokenTypes.linkHref;
-      }
-    }
-
-    // If this block is changed, it may need to be updated in GFM mode
-    if (ch === '`') {
-      var previousFormatting = state.formatting;
-      if (modeCfg.highlightFormatting) state.formatting = "code";
-      stream.eatWhile('`');
-      var count = stream.current().length
-      if (state.code == 0 && (!state.quote || count == 1)) {
-        state.code = count
-        return getType(state)
-      } else if (count == state.code) { // Must be exact
-        var t = getType(state)
-        state.code = 0
-        return t
-      } else {
-        state.formatting = previousFormatting
-        return getType(state)
-      }
-    } else if (state.code) {
-      return getType(state);
-    }
-
-    if (ch === '\\') {
-      stream.next();
-      if (modeCfg.highlightFormatting) {
-        var type = getType(state);
-        var formattingEscape = tokenTypes.formatting + "-escape";
-        return type ? type + " " + formattingEscape : formattingEscape;
-      }
-    }
-
-    if (ch === '!' && stream.match(/\[[^\]]*\] ?(?:\(|\[)/, false)) {
-      state.imageMarker = true;
-      state.image = true;
-      if (modeCfg.highlightFormatting) state.formatting = "image";
-      return getType(state);
-    }
-
-    if (ch === '[' && state.imageMarker && stream.match(/[^\]]*\](\(.*?\)| ?\[.*?\])/, false)) {
-      state.imageMarker = false;
-      state.imageAltText = true
-      if (modeCfg.highlightFormatting) state.formatting = "image";
-      return getType(state);
-    }
-
-    if (ch === ']' && state.imageAltText) {
-      if (modeCfg.highlightFormatting) state.formatting = "image";
-      var type = getType(state);
-      state.imageAltText = false;
-      state.image = false;
-      state.inline = state.f = linkHref;
-      return type;
-    }
-
-    if (ch === '[' && !state.image) {
-      state.linkText = true;
-      if (modeCfg.highlightFormatting) state.formatting = "link";
-      return getType(state);
-    }
-
-    if (ch === ']' && state.linkText) {
-      if (modeCfg.highlightFormatting) state.formatting = "link";
-      var type = getType(state);
-      state.linkText = false;
-      state.inline = state.f = stream.match(/\(.*?\)| ?\[.*?\]/, false) ? linkHref : inlineNormal
-      return type;
-    }
-
-    if (ch === '<' && stream.match(/^(https?|ftps?):\/\/(?:[^\\>]|\\.)+>/, false)) {
-      state.f = state.inline = linkInline;
-      if (modeCfg.highlightFormatting) state.formatting = "link";
-      var type = getType(state);
-      if (type){
-        type += " ";
-      } else {
-        type = "";
-      }
-      return type + tokenTypes.linkInline;
-    }
-
-    if (ch === '<' && stream.match(/^[^> \\]+@(?:[^\\>]|\\.)+>/, false)) {
-      state.f = state.inline = linkInline;
-      if (modeCfg.highlightFormatting) state.formatting = "link";
-      var type = getType(state);
-      if (type){
-        type += " ";
-      } else {
-        type = "";
-      }
-      return type + tokenTypes.linkEmail;
-    }
-
-    if (modeCfg.xml && ch === '<' && stream.match(/^(!--|\?|!\[CDATA\[|[a-z][a-z0-9-]*(?:\s+[a-z_:.\-]+(?:\s*=\s*[^>]+)?)*\s*(?:>|$))/i, false)) {
-      var end = stream.string.indexOf(">", stream.pos);
-      if (end != -1) {
-        var atts = stream.string.substring(stream.start, end);
-        if (/markdown\s*=\s*('|"){0,1}1('|"){0,1}/.test(atts)) state.md_inside = true;
-      }
-      stream.backUp(1);
-      state.htmlState = CodeMirror.startState(htmlMode);
-      return switchBlock(stream, state, htmlBlock);
-    }
-
-    if (modeCfg.xml && ch === '<' && stream.match(/^\/\w*?>/)) {
-      state.md_inside = false;
-      return "tag";
-    } else if (ch === "*" || ch === "_") {
-      var len = 1, before = stream.pos == 1 ? " " : stream.string.charAt(stream.pos - 2)
-      while (len < 3 && stream.eat(ch)) len++
-      var after = stream.peek() || " "
-      // See http://spec.commonmark.org/0.27/#emphasis-and-strong-emphasis
-      var leftFlanking = !/\s/.test(after) && (!punctuation.test(after) || /\s/.test(before) || punctuation.test(before))
-      var rightFlanking = !/\s/.test(before) && (!punctuation.test(before) || /\s/.test(after) || punctuation.test(after))
-      var setEm = null, setStrong = null
-      if (len % 2) { // Em
-        if (!state.em && leftFlanking && (ch === "*" || !rightFlanking || punctuation.test(before)))
-          setEm = true
-        else if (state.em == ch && rightFlanking && (ch === "*" || !leftFlanking || punctuation.test(after)))
-          setEm = false
-      }
-      if (len > 1) { // Strong
-        if (!state.strong && leftFlanking && (ch === "*" || !rightFlanking || punctuation.test(before)))
-          setStrong = true
-        else if (state.strong == ch && rightFlanking && (ch === "*" || !leftFlanking || punctuation.test(after)))
-          setStrong = false
-      }
-      if (setStrong != null || setEm != null) {
-        if (modeCfg.highlightFormatting) state.formatting = setEm == null ? "strong" : setStrong == null ? "em" : "strong em"
-        if (setEm === true) state.em = ch
-        if (setStrong === true) state.strong = ch
-        var t = getType(state)
-        if (setEm === false) state.em = false
-        if (setStrong === false) state.strong = false
-        return t
-      }
-    } else if (ch === ' ') {
-      if (stream.eat('*') || stream.eat('_')) { // Probably surrounded by spaces
-        if (stream.peek() === ' ') { // Surrounded by spaces, ignore
-          return getType(state);
-        } else { // Not surrounded by spaces, back up pointer
-          stream.backUp(1);
-        }
-      }
-    }
-
-    if (modeCfg.strikethrough) {
-      if (ch === '~' && stream.eatWhile(ch)) {
-        if (state.strikethrough) {// Remove strikethrough
-          if (modeCfg.highlightFormatting) state.formatting = "strikethrough";
-          var t = getType(state);
-          state.strikethrough = false;
-          return t;
-        } else if (stream.match(/^[^\s]/, false)) {// Add strikethrough
-          state.strikethrough = true;
-          if (modeCfg.highlightFormatting) state.formatting = "strikethrough";
-          return getType(state);
-        }
-      } else if (ch === ' ') {
-        if (stream.match(/^~~/, true)) { // Probably surrounded by space
-          if (stream.peek() === ' ') { // Surrounded by spaces, ignore
-            return getType(state);
-          } else { // Not surrounded by spaces, back up pointer
-            stream.backUp(2);
-          }
-        }
-      }
-    }
-
-    if (modeCfg.emoji && ch === ":" && stream.match(/^[a-z_\d+-]+:/)) {
-      state.emoji = true;
-      if (modeCfg.highlightFormatting) state.formatting = "emoji";
-      var retType = getType(state);
-      state.emoji = false;
-      return retType;
-    }
-
-    if (ch === ' ') {
-      if (stream.match(/^ +$/, false)) {
-        state.trailingSpace++;
-      } else if (state.trailingSpace) {
-        state.trailingSpaceNewLine = true;
-      }
-    }
-
-    return getType(state);
-  }
-
-  function linkInline(stream, state) {
-    var ch = stream.next();
-
-    if (ch === ">") {
-      state.f = state.inline = inlineNormal;
-      if (modeCfg.highlightFormatting) state.formatting = "link";
-      var type = getType(state);
-      if (type){
-        type += " ";
-      } else {
-        type = "";
-      }
-      return type + tokenTypes.linkInline;
-    }
-
-    stream.match(/^[^>]+/, true);
-
-    return tokenTypes.linkInline;
-  }
-
-  function linkHref(stream, state) {
-    // Check if space, and return NULL if so (to avoid marking the space)
-    if(stream.eatSpace()){
-      return null;
-    }
-    var ch = stream.next();
-    if (ch === '(' || ch === '[') {
-      state.f = state.inline = getLinkHrefInside(ch === "(" ? ")" : "]");
-      if (modeCfg.highlightFormatting) state.formatting = "link-string";
-      state.linkHref = true;
-      return getType(state);
-    }
-    return 'error';
-  }
-
-  var linkRE = {
-    ")": /^(?:[^\\\(\)]|\\.|\((?:[^\\\(\)]|\\.)*\))*?(?=\))/,
-    "]": /^(?:[^\\\[\]]|\\.|\[(?:[^\\\[\]]|\\.)*\])*?(?=\])/
-  }
-
-  function getLinkHrefInside(endChar) {
-    return function(stream, state) {
-      var ch = stream.next();
-
-      if (ch === endChar) {
-        state.f = state.inline = inlineNormal;
-        if (modeCfg.highlightFormatting) state.formatting = "link-string";
-        var returnState = getType(state);
-        state.linkHref = false;
-        return returnState;
-      }
-
-      stream.match(linkRE[endChar])
-      state.linkHref = true;
-      return getType(state);
-    };
-  }
-
-  function footnoteLink(stream, state) {
-    if (stream.match(/^([^\]\\]|\\.)*\]:/, false)) {
-      state.f = footnoteLinkInside;
-      stream.next(); // Consume [
-      if (modeCfg.highlightFormatting) state.formatting = "link";
-      state.linkText = true;
-      return getType(state);
-    }
-    return switchInline(stream, state, inlineNormal);
-  }
-
-  function footnoteLinkInside(stream, state) {
-    if (stream.match(/^\]:/, true)) {
-      state.f = state.inline = footnoteUrl;
-      if (modeCfg.highlightFormatting) state.formatting = "link";
-      var returnType = getType(state);
-      state.linkText = false;
-      return returnType;
-    }
-
-    stream.match(/^([^\]\\]|\\.)+/, true);
-
-    return tokenTypes.linkText;
-  }
-
-  function footnoteUrl(stream, state) {
-    // Check if space, and return NULL if so (to avoid marking the space)
-    if(stream.eatSpace()){
-      return null;
-    }
-    // Match URL
-    stream.match(/^[^\s]+/, true);
-    // Check for link title
-    if (stream.peek() === undefined) { // End of line, set flag to check next line
-      state.linkTitle = true;
-    } else { // More content on line, check if link title
-      stream.match(/^(?:\s+(?:"(?:[^"\\]|\\\\|\\.)+"|'(?:[^'\\]|\\\\|\\.)+'|\((?:[^)\\]|\\\\|\\.)+\)))?/, true);
-    }
-    state.f = state.inline = inlineNormal;
-    return tokenTypes.linkHref + " url";
-  }
-
-  var mode = {
-    startState: function() {
-      return {
-        f: blockNormal,
-
-        prevLine: {stream: null},
-        thisLine: {stream: null},
-
-        block: blockNormal,
-        htmlState: null,
-        indentation: 0,
-
-        inline: inlineNormal,
-        text: handleText,
-
-        formatting: false,
-        linkText: false,
-        linkHref: false,
-        linkTitle: false,
-        code: 0,
-        em: false,
-        strong: false,
-        header: 0,
-        setext: 0,
-        hr: false,
-        taskList: false,
-        list: false,
-        listStack: [],
-        quote: 0,
-        trailingSpace: 0,
-        trailingSpaceNewLine: false,
-        strikethrough: false,
-        emoji: false,
-        fencedEndRE: null
-      };
-    },
-
-    copyState: function(s) {
-      return {
-        f: s.f,
-
-        prevLine: s.prevLine,
-        thisLine: s.thisLine,
-
-        block: s.block,
-        htmlState: s.htmlState && CodeMirror.copyState(htmlMode, s.htmlState),
-        indentation: s.indentation,
-
-        localMode: s.localMode,
-        localState: s.localMode ? CodeMirror.copyState(s.localMode, s.localState) : null,
-
-        inline: s.inline,
-        text: s.text,
-        formatting: false,
-        linkText: s.linkText,
-        linkTitle: s.linkTitle,
-        linkHref: s.linkHref,
-        code: s.code,
-        em: s.em,
-        strong: s.strong,
-        strikethrough: s.strikethrough,
-        emoji: s.emoji,
-        header: s.header,
-        setext: s.setext,
-        hr: s.hr,
-        taskList: s.taskList,
-        list: s.list,
-        listStack: s.listStack.slice(0),
-        quote: s.quote,
-        indentedCode: s.indentedCode,
-        trailingSpace: s.trailingSpace,
-        trailingSpaceNewLine: s.trailingSpaceNewLine,
-        md_inside: s.md_inside,
-        fencedEndRE: s.fencedEndRE
-      };
-    },
-
-    token: function(stream, state) {
-
-      // Reset state.formatting
-      state.formatting = false;
-
-      if (stream != state.thisLine.stream) {
-        state.header = 0;
-        state.hr = false;
-
-        if (stream.match(/^\s*$/, true)) {
-          blankLine(state);
-          return null;
-        }
-
-        state.prevLine = state.thisLine
-        state.thisLine = {stream: stream}
-
-        // Reset state.taskList
-        state.taskList = false;
-
-        // Reset state.trailingSpace
-        state.trailingSpace = 0;
-        state.trailingSpaceNewLine = false;
-
-        if (!state.localState) {
-          state.f = state.block;
-          if (state.f != htmlBlock) {
-            var indentation = stream.match(/^\s*/, true)[0].replace(/\t/g, expandedTab).length;
-            state.indentation = indentation;
-            state.indentationDiff = null;
-            if (indentation > 0) return null;
-          }
-        }
-      }
-      return state.f(stream, state);
-    },
-
-    innerMode: function(state) {
-      if (state.block == htmlBlock) return {state: state.htmlState, mode: htmlMode};
-      if (state.localState) return {state: state.localState, mode: state.localMode};
-      return {state: state, mode: mode};
-    },
-
-    indent: function(state, textAfter, line) {
-      if (state.block == htmlBlock && htmlMode.indent) return htmlMode.indent(state.htmlState, textAfter, line)
-      if (state.localState && state.localMode.indent) return state.localMode.indent(state.localState, textAfter, line)
-      return CodeMirror.Pass
-    },
-
-    blankLine: blankLine,
-
-    getType: getType,
-
-    closeBrackets: "()[]{}''\"\"``",
-    fold: "markdown"
-  };
-  return mode;
-}, "xml");
-
-CodeMirror.defineMIME("text/markdown", "markdown");
-
-CodeMirror.defineMIME("text/x-markdown", "markdown");
-
-});
-
-
-/***/ }),
-/* 11 */
-/***/ (function(module, exports, __webpack_require__) {
-
-// CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: http://codemirror.net/LICENSE
-
-(function(mod) {
-  if (true) // CommonJS
-    mod(__webpack_require__(4));
-  else if (typeof define == "function" && define.amd) // AMD
-    define(["../../lib/codemirror"], mod);
-  else // Plain browser env
-    mod(CodeMirror);
-})(function(CodeMirror) {
-"use strict";
-
-var htmlConfig = {
-  autoSelfClosers: {'area': true, 'base': true, 'br': true, 'col': true, 'command': true,
-                    'embed': true, 'frame': true, 'hr': true, 'img': true, 'input': true,
-                    'keygen': true, 'link': true, 'meta': true, 'param': true, 'source': true,
-                    'track': true, 'wbr': true, 'menuitem': true},
-  implicitlyClosed: {'dd': true, 'li': true, 'optgroup': true, 'option': true, 'p': true,
-                     'rp': true, 'rt': true, 'tbody': true, 'td': true, 'tfoot': true,
-                     'th': true, 'tr': true},
-  contextGrabbers: {
-    'dd': {'dd': true, 'dt': true},
-    'dt': {'dd': true, 'dt': true},
-    'li': {'li': true},
-    'option': {'option': true, 'optgroup': true},
-    'optgroup': {'optgroup': true},
-    'p': {'address': true, 'article': true, 'aside': true, 'blockquote': true, 'dir': true,
-          'div': true, 'dl': true, 'fieldset': true, 'footer': true, 'form': true,
-          'h1': true, 'h2': true, 'h3': true, 'h4': true, 'h5': true, 'h6': true,
-          'header': true, 'hgroup': true, 'hr': true, 'menu': true, 'nav': true, 'ol': true,
-          'p': true, 'pre': true, 'section': true, 'table': true, 'ul': true},
-    'rp': {'rp': true, 'rt': true},
-    'rt': {'rp': true, 'rt': true},
-    'tbody': {'tbody': true, 'tfoot': true},
-    'td': {'td': true, 'th': true},
-    'tfoot': {'tbody': true},
-    'th': {'td': true, 'th': true},
-    'thead': {'tbody': true, 'tfoot': true},
-    'tr': {'tr': true}
-  },
-  doNotIndent: {"pre": true},
-  allowUnquoted: true,
-  allowMissing: true,
-  caseFold: true
-}
-
-var xmlConfig = {
-  autoSelfClosers: {},
-  implicitlyClosed: {},
-  contextGrabbers: {},
-  doNotIndent: {},
-  allowUnquoted: false,
-  allowMissing: false,
-  allowMissingTagName: false,
-  caseFold: false
-}
-
-CodeMirror.defineMode("xml", function(editorConf, config_) {
-  var indentUnit = editorConf.indentUnit
-  var config = {}
-  var defaults = config_.htmlMode ? htmlConfig : xmlConfig
-  for (var prop in defaults) config[prop] = defaults[prop]
-  for (var prop in config_) config[prop] = config_[prop]
-
-  // Return variables for tokenizers
-  var type, setStyle;
-
-  function inText(stream, state) {
-    function chain(parser) {
-      state.tokenize = parser;
-      return parser(stream, state);
-    }
-
-    var ch = stream.next();
-    if (ch == "<") {
-      if (stream.eat("!")) {
-        if (stream.eat("[")) {
-          if (stream.match("CDATA[")) return chain(inBlock("atom", "]]>"));
-          else return null;
-        } else if (stream.match("--")) {
-          return chain(inBlock("comment", "-->"));
-        } else if (stream.match("DOCTYPE", true, true)) {
-          stream.eatWhile(/[\w\._\-]/);
-          return chain(doctype(1));
-        } else {
-          return null;
-        }
-      } else if (stream.eat("?")) {
-        stream.eatWhile(/[\w\._\-]/);
-        state.tokenize = inBlock("meta", "?>");
-        return "meta";
-      } else {
-        type = stream.eat("/") ? "closeTag" : "openTag";
-        state.tokenize = inTag;
-        return "tag bracket";
-      }
-    } else if (ch == "&") {
-      var ok;
-      if (stream.eat("#")) {
-        if (stream.eat("x")) {
-          ok = stream.eatWhile(/[a-fA-F\d]/) && stream.eat(";");
-        } else {
-          ok = stream.eatWhile(/[\d]/) && stream.eat(";");
-        }
-      } else {
-        ok = stream.eatWhile(/[\w\.\-:]/) && stream.eat(";");
-      }
-      return ok ? "atom" : "error";
-    } else {
-      stream.eatWhile(/[^&<]/);
-      return null;
-    }
-  }
-  inText.isInText = true;
-
-  function inTag(stream, state) {
-    var ch = stream.next();
-    if (ch == ">" || (ch == "/" && stream.eat(">"))) {
-      state.tokenize = inText;
-      type = ch == ">" ? "endTag" : "selfcloseTag";
-      return "tag bracket";
-    } else if (ch == "=") {
-      type = "equals";
-      return null;
-    } else if (ch == "<") {
-      state.tokenize = inText;
-      state.state = baseState;
-      state.tagName = state.tagStart = null;
-      var next = state.tokenize(stream, state);
-      return next ? next + " tag error" : "tag error";
-    } else if (/[\'\"]/.test(ch)) {
-      state.tokenize = inAttribute(ch);
-      state.stringStartCol = stream.column();
-      return state.tokenize(stream, state);
-    } else {
-      stream.match(/^[^\s\u00a0=<>\"\']*[^\s\u00a0=<>\"\'\/]/);
-      return "word";
-    }
-  }
-
-  function inAttribute(quote) {
-    var closure = function(stream, state) {
-      while (!stream.eol()) {
-        if (stream.next() == quote) {
-          state.tokenize = inTag;
-          break;
-        }
-      }
-      return "string";
-    };
-    closure.isInAttribute = true;
-    return closure;
-  }
-
-  function inBlock(style, terminator) {
-    return function(stream, state) {
-      while (!stream.eol()) {
-        if (stream.match(terminator)) {
-          state.tokenize = inText;
-          break;
-        }
-        stream.next();
-      }
-      return style;
-    }
-  }
-
-  function doctype(depth) {
-    return function(stream, state) {
-      var ch;
-      while ((ch = stream.next()) != null) {
-        if (ch == "<") {
-          state.tokenize = doctype(depth + 1);
-          return state.tokenize(stream, state);
-        } else if (ch == ">") {
-          if (depth == 1) {
-            state.tokenize = inText;
-            break;
-          } else {
-            state.tokenize = doctype(depth - 1);
-            return state.tokenize(stream, state);
-          }
-        }
-      }
-      return "meta";
-    };
-  }
-
-  function Context(state, tagName, startOfLine) {
-    this.prev = state.context;
-    this.tagName = tagName;
-    this.indent = state.indented;
-    this.startOfLine = startOfLine;
-    if (config.doNotIndent.hasOwnProperty(tagName) || (state.context && state.context.noIndent))
-      this.noIndent = true;
-  }
-  function popContext(state) {
-    if (state.context) state.context = state.context.prev;
-  }
-  function maybePopContext(state, nextTagName) {
-    var parentTagName;
-    while (true) {
-      if (!state.context) {
-        return;
-      }
-      parentTagName = state.context.tagName;
-      if (!config.contextGrabbers.hasOwnProperty(parentTagName) ||
-          !config.contextGrabbers[parentTagName].hasOwnProperty(nextTagName)) {
-        return;
-      }
-      popContext(state);
-    }
-  }
-
-  function baseState(type, stream, state) {
-    if (type == "openTag") {
-      state.tagStart = stream.column();
-      return tagNameState;
-    } else if (type == "closeTag") {
-      return closeTagNameState;
-    } else {
-      return baseState;
-    }
-  }
-  function tagNameState(type, stream, state) {
-    if (type == "word") {
-      state.tagName = stream.current();
-      setStyle = "tag";
-      return attrState;
-    } else if (config.allowMissingTagName && type == "endTag") {
-      setStyle = "tag bracket";
-      return attrState(type, stream, state);
-    } else {
-      setStyle = "error";
-      return tagNameState;
-    }
-  }
-  function closeTagNameState(type, stream, state) {
-    if (type == "word") {
-      var tagName = stream.current();
-      if (state.context && state.context.tagName != tagName &&
-          config.implicitlyClosed.hasOwnProperty(state.context.tagName))
-        popContext(state);
-      if ((state.context && state.context.tagName == tagName) || config.matchClosing === false) {
-        setStyle = "tag";
-        return closeState;
-      } else {
-        setStyle = "tag error";
-        return closeStateErr;
-      }
-    } else if (config.allowMissingTagName && type == "endTag") {
-      setStyle = "tag bracket";
-      return closeState(type, stream, state);
-    } else {
-      setStyle = "error";
-      return closeStateErr;
-    }
-  }
-
-  function closeState(type, _stream, state) {
-    if (type != "endTag") {
-      setStyle = "error";
-      return closeState;
-    }
-    popContext(state);
-    return baseState;
-  }
-  function closeStateErr(type, stream, state) {
-    setStyle = "error";
-    return closeState(type, stream, state);
-  }
-
-  function attrState(type, _stream, state) {
-    if (type == "word") {
-      setStyle = "attribute";
-      return attrEqState;
-    } else if (type == "endTag" || type == "selfcloseTag") {
-      var tagName = state.tagName, tagStart = state.tagStart;
-      state.tagName = state.tagStart = null;
-      if (type == "selfcloseTag" ||
-          config.autoSelfClosers.hasOwnProperty(tagName)) {
-        maybePopContext(state, tagName);
-      } else {
-        maybePopContext(state, tagName);
-        state.context = new Context(state, tagName, tagStart == state.indented);
-      }
-      return baseState;
-    }
-    setStyle = "error";
-    return attrState;
-  }
-  function attrEqState(type, stream, state) {
-    if (type == "equals") return attrValueState;
-    if (!config.allowMissing) setStyle = "error";
-    return attrState(type, stream, state);
-  }
-  function attrValueState(type, stream, state) {
-    if (type == "string") return attrContinuedState;
-    if (type == "word" && config.allowUnquoted) {setStyle = "string"; return attrState;}
-    setStyle = "error";
-    return attrState(type, stream, state);
-  }
-  function attrContinuedState(type, stream, state) {
-    if (type == "string") return attrContinuedState;
-    return attrState(type, stream, state);
-  }
-
-  return {
-    startState: function(baseIndent) {
-      var state = {tokenize: inText,
-                   state: baseState,
-                   indented: baseIndent || 0,
-                   tagName: null, tagStart: null,
-                   context: null}
-      if (baseIndent != null) state.baseIndent = baseIndent
-      return state
-    },
-
-    token: function(stream, state) {
-      if (!state.tagName && stream.sol())
-        state.indented = stream.indentation();
-
-      if (stream.eatSpace()) return null;
-      type = null;
-      var style = state.tokenize(stream, state);
-      if ((style || type) && style != "comment") {
-        setStyle = null;
-        state.state = state.state(type || style, stream, state);
-        if (setStyle)
-          style = setStyle == "error" ? style + " error" : setStyle;
-      }
-      return style;
-    },
-
-    indent: function(state, textAfter, fullLine) {
-      var context = state.context;
-      // Indent multi-line strings (e.g. css).
-      if (state.tokenize.isInAttribute) {
-        if (state.tagStart == state.indented)
-          return state.stringStartCol + 1;
-        else
-          return state.indented + indentUnit;
-      }
-      if (context && context.noIndent) return CodeMirror.Pass;
-      if (state.tokenize != inTag && state.tokenize != inText)
-        return fullLine ? fullLine.match(/^(\s*)/)[0].length : 0;
-      // Indent the starts of attribute names.
-      if (state.tagName) {
-        if (config.multilineTagIndentPastTag !== false)
-          return state.tagStart + state.tagName.length + 2;
-        else
-          return state.tagStart + indentUnit * (config.multilineTagIndentFactor || 1);
-      }
-      if (config.alignCDATA && /<!\[CDATA\[/.test(textAfter)) return 0;
-      var tagAfter = textAfter && /^<(\/)?([\w_:\.-]*)/.exec(textAfter);
-      if (tagAfter && tagAfter[1]) { // Closing tag spotted
-        while (context) {
-          if (context.tagName == tagAfter[2]) {
-            context = context.prev;
-            break;
-          } else if (config.implicitlyClosed.hasOwnProperty(context.tagName)) {
-            context = context.prev;
-          } else {
-            break;
-          }
-        }
-      } else if (tagAfter) { // Opening tag spotted
-        while (context) {
-          var grabbers = config.contextGrabbers[context.tagName];
-          if (grabbers && grabbers.hasOwnProperty(tagAfter[2]))
-            context = context.prev;
-          else
-            break;
-        }
-      }
-      while (context && context.prev && !context.startOfLine)
-        context = context.prev;
-      if (context) return context.indent + indentUnit;
-      else return state.baseIndent || 0;
-    },
-
-    electricInput: /<\/[\s\w:]+>$/,
-    blockCommentStart: "<!--",
-    blockCommentEnd: "-->",
-
-    configuration: config.htmlMode ? "html" : "xml",
-    helperType: config.htmlMode ? "html" : "xml",
-
-    skipAttribute: function(state) {
-      if (state.state == attrValueState)
-        state.state = attrState
-    }
-  };
-});
-
-CodeMirror.defineMIME("text/xml", "xml");
-CodeMirror.defineMIME("application/xml", "xml");
-if (!CodeMirror.mimeModes.hasOwnProperty("text/html"))
-  CodeMirror.defineMIME("text/html", {name: "xml", htmlMode: true});
-
-});
-
-
-/***/ }),
-/* 12 */
-/***/ (function(module, exports, __webpack_require__) {
-
-// CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: http://codemirror.net/LICENSE
-
-// Utility function that allows modes to be combined. The mode given
-// as the base argument takes care of most of the normal mode
-// functionality, but a second (typically simple) mode is used, which
-// can override the style of text. Both modes get to parse all of the
-// text, but when both assign a non-null style to a piece of code, the
-// overlay wins, unless the combine argument was true and not overridden,
-// or state.overlay.combineTokens was true, in which case the styles are
-// combined.
-
-(function(mod) {
-  if (true) // CommonJS
-    mod(__webpack_require__(4));
-  else if (typeof define == "function" && define.amd) // AMD
-    define(["../../lib/codemirror"], mod);
-  else // Plain browser env
-    mod(CodeMirror);
-})(function(CodeMirror) {
-"use strict";
-
-CodeMirror.overlayMode = function(base, overlay, combine) {
-  return {
-    startState: function() {
-      return {
-        base: CodeMirror.startState(base),
-        overlay: CodeMirror.startState(overlay),
-        basePos: 0, baseCur: null,
-        overlayPos: 0, overlayCur: null,
-        streamSeen: null
-      };
-    },
-    copyState: function(state) {
-      return {
-        base: CodeMirror.copyState(base, state.base),
-        overlay: CodeMirror.copyState(overlay, state.overlay),
-        basePos: state.basePos, baseCur: null,
-        overlayPos: state.overlayPos, overlayCur: null
-      };
-    },
-
-    token: function(stream, state) {
-      if (stream != state.streamSeen ||
-          Math.min(state.basePos, state.overlayPos) < stream.start) {
-        state.streamSeen = stream;
-        state.basePos = state.overlayPos = stream.start;
-      }
-
-      if (stream.start == state.basePos) {
-        state.baseCur = base.token(stream, state.base);
-        state.basePos = stream.pos;
-      }
-      if (stream.start == state.overlayPos) {
-        stream.pos = stream.start;
-        state.overlayCur = overlay.token(stream, state.overlay);
-        state.overlayPos = stream.pos;
-      }
-      stream.pos = Math.min(state.basePos, state.overlayPos);
-
-      // state.overlay.combineTokens always takes precedence over combine,
-      // unless set to null
-      if (state.overlayCur == null) return state.baseCur;
-      else if (state.baseCur != null &&
-               state.overlay.combineTokens ||
-               combine && state.overlay.combineTokens == null)
-        return state.baseCur + " " + state.overlayCur;
-      else return state.overlayCur;
-    },
-
-    indent: base.indent && function(state, textAfter) {
-      return base.indent(state.base, textAfter);
-    },
-    electricChars: base.electricChars,
-
-    innerMode: function(state) { return {state: state.base, mode: base}; },
-
-    blankLine: function(state) {
-      var baseToken, overlayToken;
-      if (base.blankLine) baseToken = base.blankLine(state.base);
-      if (overlay.blankLine) overlayToken = overlay.blankLine(state.overlay);
-
-      return overlayToken == null ?
-        baseToken :
-        (combine && baseToken != null ? baseToken + " " + overlayToken : overlayToken);
-    }
-  };
-};
-
-});
-
-
-/***/ }),
-/* 13 */
-/***/ (function(module, exports, __webpack_require__) {
-
 /* WEBPACK VAR INJECTION */(function(global) {/**
  * marked - a markdown parser
  * Copyright (c) 2011-2014, Christopher Jeffrey. (MIT Licensed)
@@ -24616,6 +22880,1742 @@ if (true) {
 })(this || (typeof window !== 'undefined' ? window : global));
 
 /* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(5)))
+
+/***/ }),
+/* 8 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/* WEBPACK VAR INJECTION */(function(process) {
+
+var utils = __webpack_require__(3);
+var normalizeHeaderName = __webpack_require__(125);
+
+var DEFAULT_CONTENT_TYPE = {
+  'Content-Type': 'application/x-www-form-urlencoded'
+};
+
+function setContentTypeIfUnset(headers, value) {
+  if (!utils.isUndefined(headers) && utils.isUndefined(headers['Content-Type'])) {
+    headers['Content-Type'] = value;
+  }
+}
+
+function getDefaultAdapter() {
+  var adapter;
+  if (typeof XMLHttpRequest !== 'undefined') {
+    // For browsers use XHR adapter
+    adapter = __webpack_require__(17);
+  } else if (typeof process !== 'undefined') {
+    // For node use HTTP adapter
+    adapter = __webpack_require__(17);
+  }
+  return adapter;
+}
+
+var defaults = {
+  adapter: getDefaultAdapter(),
+
+  transformRequest: [function transformRequest(data, headers) {
+    normalizeHeaderName(headers, 'Content-Type');
+    if (utils.isFormData(data) ||
+      utils.isArrayBuffer(data) ||
+      utils.isBuffer(data) ||
+      utils.isStream(data) ||
+      utils.isFile(data) ||
+      utils.isBlob(data)
+    ) {
+      return data;
+    }
+    if (utils.isArrayBufferView(data)) {
+      return data.buffer;
+    }
+    if (utils.isURLSearchParams(data)) {
+      setContentTypeIfUnset(headers, 'application/x-www-form-urlencoded;charset=utf-8');
+      return data.toString();
+    }
+    if (utils.isObject(data)) {
+      setContentTypeIfUnset(headers, 'application/json;charset=utf-8');
+      return JSON.stringify(data);
+    }
+    return data;
+  }],
+
+  transformResponse: [function transformResponse(data) {
+    /*eslint no-param-reassign:0*/
+    if (typeof data === 'string') {
+      try {
+        data = JSON.parse(data);
+      } catch (e) { /* Ignore */ }
+    }
+    return data;
+  }],
+
+  /**
+   * A timeout in milliseconds to abort a request. If set to 0 (default) a
+   * timeout is not created.
+   */
+  timeout: 0,
+
+  xsrfCookieName: 'XSRF-TOKEN',
+  xsrfHeaderName: 'X-XSRF-TOKEN',
+
+  maxContentLength: -1,
+
+  validateStatus: function validateStatus(status) {
+    return status >= 200 && status < 300;
+  }
+};
+
+defaults.headers = {
+  common: {
+    'Accept': 'application/json, text/plain, */*'
+  }
+};
+
+utils.forEach(['delete', 'get', 'head'], function forEachMethodNoData(method) {
+  defaults.headers[method] = {};
+});
+
+utils.forEach(['post', 'put', 'patch'], function forEachMethodWithData(method) {
+  defaults.headers[method] = utils.merge(DEFAULT_CONTENT_TYPE);
+});
+
+module.exports = defaults;
+
+/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(9)))
+
+/***/ }),
+/* 9 */
+/***/ (function(module, exports) {
+
+// shim for using process in browser
+var process = module.exports = {};
+
+// cached from whatever global is present so that test runners that stub it
+// don't break things.  But we need to wrap it in a try catch in case it is
+// wrapped in strict mode code which doesn't define any globals.  It's inside a
+// function because try/catches deoptimize in certain engines.
+
+var cachedSetTimeout;
+var cachedClearTimeout;
+
+function defaultSetTimout() {
+    throw new Error('setTimeout has not been defined');
+}
+function defaultClearTimeout () {
+    throw new Error('clearTimeout has not been defined');
+}
+(function () {
+    try {
+        if (typeof setTimeout === 'function') {
+            cachedSetTimeout = setTimeout;
+        } else {
+            cachedSetTimeout = defaultSetTimout;
+        }
+    } catch (e) {
+        cachedSetTimeout = defaultSetTimout;
+    }
+    try {
+        if (typeof clearTimeout === 'function') {
+            cachedClearTimeout = clearTimeout;
+        } else {
+            cachedClearTimeout = defaultClearTimeout;
+        }
+    } catch (e) {
+        cachedClearTimeout = defaultClearTimeout;
+    }
+} ())
+function runTimeout(fun) {
+    if (cachedSetTimeout === setTimeout) {
+        //normal enviroments in sane situations
+        return setTimeout(fun, 0);
+    }
+    // if setTimeout wasn't available but was latter defined
+    if ((cachedSetTimeout === defaultSetTimout || !cachedSetTimeout) && setTimeout) {
+        cachedSetTimeout = setTimeout;
+        return setTimeout(fun, 0);
+    }
+    try {
+        // when when somebody has screwed with setTimeout but no I.E. maddness
+        return cachedSetTimeout(fun, 0);
+    } catch(e){
+        try {
+            // When we are in I.E. but the script has been evaled so I.E. doesn't trust the global object when called normally
+            return cachedSetTimeout.call(null, fun, 0);
+        } catch(e){
+            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error
+            return cachedSetTimeout.call(this, fun, 0);
+        }
+    }
+
+
+}
+function runClearTimeout(marker) {
+    if (cachedClearTimeout === clearTimeout) {
+        //normal enviroments in sane situations
+        return clearTimeout(marker);
+    }
+    // if clearTimeout wasn't available but was latter defined
+    if ((cachedClearTimeout === defaultClearTimeout || !cachedClearTimeout) && clearTimeout) {
+        cachedClearTimeout = clearTimeout;
+        return clearTimeout(marker);
+    }
+    try {
+        // when when somebody has screwed with setTimeout but no I.E. maddness
+        return cachedClearTimeout(marker);
+    } catch (e){
+        try {
+            // When we are in I.E. but the script has been evaled so I.E. doesn't  trust the global object when called normally
+            return cachedClearTimeout.call(null, marker);
+        } catch (e){
+            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error.
+            // Some versions of I.E. have different rules for clearTimeout vs setTimeout
+            return cachedClearTimeout.call(this, marker);
+        }
+    }
+
+
+
+}
+var queue = [];
+var draining = false;
+var currentQueue;
+var queueIndex = -1;
+
+function cleanUpNextTick() {
+    if (!draining || !currentQueue) {
+        return;
+    }
+    draining = false;
+    if (currentQueue.length) {
+        queue = currentQueue.concat(queue);
+    } else {
+        queueIndex = -1;
+    }
+    if (queue.length) {
+        drainQueue();
+    }
+}
+
+function drainQueue() {
+    if (draining) {
+        return;
+    }
+    var timeout = runTimeout(cleanUpNextTick);
+    draining = true;
+
+    var len = queue.length;
+    while(len) {
+        currentQueue = queue;
+        queue = [];
+        while (++queueIndex < len) {
+            if (currentQueue) {
+                currentQueue[queueIndex].run();
+            }
+        }
+        queueIndex = -1;
+        len = queue.length;
+    }
+    currentQueue = null;
+    draining = false;
+    runClearTimeout(timeout);
+}
+
+process.nextTick = function (fun) {
+    var args = new Array(arguments.length - 1);
+    if (arguments.length > 1) {
+        for (var i = 1; i < arguments.length; i++) {
+            args[i - 1] = arguments[i];
+        }
+    }
+    queue.push(new Item(fun, args));
+    if (queue.length === 1 && !draining) {
+        runTimeout(drainQueue);
+    }
+};
+
+// v8 likes predictible objects
+function Item(fun, array) {
+    this.fun = fun;
+    this.array = array;
+}
+Item.prototype.run = function () {
+    this.fun.apply(null, this.array);
+};
+process.title = 'browser';
+process.browser = true;
+process.env = {};
+process.argv = [];
+process.version = ''; // empty string to avoid regexp issues
+process.versions = {};
+
+function noop() {}
+
+process.on = noop;
+process.addListener = noop;
+process.once = noop;
+process.off = noop;
+process.removeListener = noop;
+process.removeAllListeners = noop;
+process.emit = noop;
+process.prependListener = noop;
+process.prependOnceListener = noop;
+
+process.listeners = function (name) { return [] }
+
+process.binding = function (name) {
+    throw new Error('process.binding is not supported');
+};
+
+process.cwd = function () { return '/' };
+process.chdir = function (dir) {
+    throw new Error('process.chdir is not supported');
+};
+process.umask = function() { return 0; };
+
+
+/***/ }),
+/* 10 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var disposed = false
+function injectStyle (ssrContext) {
+  if (disposed) return
+  __webpack_require__(28)
+}
+var normalizeComponent = __webpack_require__(2)
+/* script */
+var __vue_script__ = __webpack_require__(31)
+/* template */
+var __vue_template__ = __webpack_require__(32)
+/* template functional */
+var __vue_template_functional__ = false
+/* styles */
+var __vue_styles__ = injectStyle
+/* scopeId */
+var __vue_scopeId__ = "data-v-ba0d9948"
+/* moduleIdentifier (server only) */
+var __vue_module_identifier__ = null
+var Component = normalizeComponent(
+  __vue_script__,
+  __vue_template__,
+  __vue_template_functional__,
+  __vue_styles__,
+  __vue_scopeId__,
+  __vue_module_identifier__
+)
+Component.options.__file = "resources/assets/js/components/login/Login.vue"
+
+/* hot reload */
+if (false) {(function () {
+  var hotAPI = require("vue-hot-reload-api")
+  hotAPI.install(require("vue"), false)
+  if (!hotAPI.compatible) return
+  module.hot.accept()
+  if (!module.hot.data) {
+    hotAPI.createRecord("data-v-ba0d9948", Component.options)
+  } else {
+    hotAPI.reload("data-v-ba0d9948", Component.options)
+  }
+  module.hot.dispose(function (data) {
+    disposed = true
+  })
+})()}
+
+module.exports = Component.exports
+
+
+/***/ }),
+/* 11 */
+/***/ (function(module, exports, __webpack_require__) {
+
+// CodeMirror, copyright (c) by Marijn Haverbeke and others
+// Distributed under an MIT license: http://codemirror.net/LICENSE
+
+(function(mod) {
+  if (true) // CommonJS
+    mod(__webpack_require__(4), __webpack_require__(12), __webpack_require__(106));
+  else if (typeof define == "function" && define.amd) // AMD
+    define(["../../lib/codemirror", "../xml/xml", "../meta"], mod);
+  else // Plain browser env
+    mod(CodeMirror);
+})(function(CodeMirror) {
+"use strict";
+
+CodeMirror.defineMode("markdown", function(cmCfg, modeCfg) {
+
+  var htmlMode = CodeMirror.getMode(cmCfg, "text/html");
+  var htmlModeMissing = htmlMode.name == "null"
+
+  function getMode(name) {
+    if (CodeMirror.findModeByName) {
+      var found = CodeMirror.findModeByName(name);
+      if (found) name = found.mime || found.mimes[0];
+    }
+    var mode = CodeMirror.getMode(cmCfg, name);
+    return mode.name == "null" ? null : mode;
+  }
+
+  // Should characters that affect highlighting be highlighted separate?
+  // Does not include characters that will be output (such as `1.` and `-` for lists)
+  if (modeCfg.highlightFormatting === undefined)
+    modeCfg.highlightFormatting = false;
+
+  // Maximum number of nested blockquotes. Set to 0 for infinite nesting.
+  // Excess `>` will emit `error` token.
+  if (modeCfg.maxBlockquoteDepth === undefined)
+    modeCfg.maxBlockquoteDepth = 0;
+
+  // Turn on task lists? ("- [ ] " and "- [x] ")
+  if (modeCfg.taskLists === undefined) modeCfg.taskLists = false;
+
+  // Turn on strikethrough syntax
+  if (modeCfg.strikethrough === undefined)
+    modeCfg.strikethrough = false;
+
+  if (modeCfg.emoji === undefined)
+    modeCfg.emoji = false;
+
+  if (modeCfg.fencedCodeBlockHighlighting === undefined)
+    modeCfg.fencedCodeBlockHighlighting = true;
+
+  if (modeCfg.xml === undefined)
+    modeCfg.xml = true;
+
+  // Allow token types to be overridden by user-provided token types.
+  if (modeCfg.tokenTypeOverrides === undefined)
+    modeCfg.tokenTypeOverrides = {};
+
+  var tokenTypes = {
+    header: "header",
+    code: "comment",
+    quote: "quote",
+    list1: "variable-2",
+    list2: "variable-3",
+    list3: "keyword",
+    hr: "hr",
+    image: "image",
+    imageAltText: "image-alt-text",
+    imageMarker: "image-marker",
+    formatting: "formatting",
+    linkInline: "link",
+    linkEmail: "link",
+    linkText: "link",
+    linkHref: "string",
+    em: "em",
+    strong: "strong",
+    strikethrough: "strikethrough",
+    emoji: "builtin"
+  };
+
+  for (var tokenType in tokenTypes) {
+    if (tokenTypes.hasOwnProperty(tokenType) && modeCfg.tokenTypeOverrides[tokenType]) {
+      tokenTypes[tokenType] = modeCfg.tokenTypeOverrides[tokenType];
+    }
+  }
+
+  var hrRE = /^([*\-_])(?:\s*\1){2,}\s*$/
+  ,   listRE = /^(?:[*\-+]|^[0-9]+([.)]))\s+/
+  ,   taskListRE = /^\[(x| )\](?=\s)/i // Must follow listRE
+  ,   atxHeaderRE = modeCfg.allowAtxHeaderWithoutSpace ? /^(#+)/ : /^(#+)(?: |$)/
+  ,   setextHeaderRE = /^ *(?:\={1,}|-{1,})\s*$/
+  ,   textRE = /^[^#!\[\]*_\\<>` "'(~:]+/
+  ,   fencedCodeRE = /^(~~~+|```+)[ \t]*([\w+#-]*)[^\n`]*$/
+  ,   linkDefRE = /^\s*\[[^\]]+?\]:.*$/ // naive link-definition
+  ,   punctuation = /[!\"#$%&\'()*+,\-\.\/:;<=>?@\[\\\]^_`{|}~—]/
+  ,   expandedTab = "    " // CommonMark specifies tab as 4 spaces
+
+  function switchInline(stream, state, f) {
+    state.f = state.inline = f;
+    return f(stream, state);
+  }
+
+  function switchBlock(stream, state, f) {
+    state.f = state.block = f;
+    return f(stream, state);
+  }
+
+  function lineIsEmpty(line) {
+    return !line || !/\S/.test(line.string)
+  }
+
+  // Blocks
+
+  function blankLine(state) {
+    // Reset linkTitle state
+    state.linkTitle = false;
+    state.linkHref = false;
+    state.linkText = false;
+    // Reset EM state
+    state.em = false;
+    // Reset STRONG state
+    state.strong = false;
+    // Reset strikethrough state
+    state.strikethrough = false;
+    // Reset state.quote
+    state.quote = 0;
+    // Reset state.indentedCode
+    state.indentedCode = false;
+    if (state.f == htmlBlock) {
+      var exit = htmlModeMissing
+      if (!exit) {
+        var inner = CodeMirror.innerMode(htmlMode, state.htmlState)
+        exit = inner.mode.name == "xml" && inner.state.tagStart === null &&
+          (!inner.state.context && inner.state.tokenize.isInText)
+      }
+      if (exit) {
+        state.f = inlineNormal;
+        state.block = blockNormal;
+        state.htmlState = null;
+      }
+    }
+    // Reset state.trailingSpace
+    state.trailingSpace = 0;
+    state.trailingSpaceNewLine = false;
+    // Mark this line as blank
+    state.prevLine = state.thisLine
+    state.thisLine = {stream: null}
+    return null;
+  }
+
+  function blockNormal(stream, state) {
+    var firstTokenOnLine = stream.column() === state.indentation;
+    var prevLineLineIsEmpty = lineIsEmpty(state.prevLine.stream);
+    var prevLineIsIndentedCode = state.indentedCode;
+    var prevLineIsHr = state.prevLine.hr;
+    var prevLineIsList = state.list !== false;
+    var maxNonCodeIndentation = (state.listStack[state.listStack.length - 1] || 0) + 3;
+
+    state.indentedCode = false;
+
+    var lineIndentation = state.indentation;
+    // compute once per line (on first token)
+    if (state.indentationDiff === null) {
+      state.indentationDiff = state.indentation;
+      if (prevLineIsList) {
+        // Reset inline styles which shouldn't propagate aross list items
+        state.em = false;
+        state.strong = false;
+        state.code = false;
+        state.strikethrough = false;
+
+        state.list = null;
+        // While this list item's marker's indentation is less than the deepest
+        //  list item's content's indentation,pop the deepest list item
+        //  indentation off the stack, and update block indentation state
+        while (lineIndentation < state.listStack[state.listStack.length - 1]) {
+          state.listStack.pop();
+          if (state.listStack.length) {
+            state.indentation = state.listStack[state.listStack.length - 1];
+          // less than the first list's indent -> the line is no longer a list
+          } else {
+            state.list = false;
+          }
+        }
+        if (state.list !== false) {
+          state.indentationDiff = lineIndentation - state.listStack[state.listStack.length - 1]
+        }
+      }
+    }
+
+    // not comprehensive (currently only for setext detection purposes)
+    var allowsInlineContinuation = (
+        !prevLineLineIsEmpty && !prevLineIsHr && !state.prevLine.header &&
+        (!prevLineIsList || !prevLineIsIndentedCode) &&
+        !state.prevLine.fencedCodeEnd
+    );
+
+    var isHr = (state.list === false || prevLineIsHr || prevLineLineIsEmpty) &&
+      state.indentation <= maxNonCodeIndentation && stream.match(hrRE);
+
+    var match = null;
+    if (state.indentationDiff >= 4 && (prevLineIsIndentedCode || state.prevLine.fencedCodeEnd ||
+         state.prevLine.header || prevLineLineIsEmpty)) {
+      stream.skipToEnd();
+      state.indentedCode = true;
+      return tokenTypes.code;
+    } else if (stream.eatSpace()) {
+      return null;
+    } else if (firstTokenOnLine && state.indentation <= maxNonCodeIndentation && (match = stream.match(atxHeaderRE)) && match[1].length <= 6) {
+      state.quote = 0;
+      state.header = match[1].length;
+      state.thisLine.header = true;
+      if (modeCfg.highlightFormatting) state.formatting = "header";
+      state.f = state.inline;
+      return getType(state);
+    } else if (state.indentation <= maxNonCodeIndentation && stream.eat('>')) {
+      state.quote = firstTokenOnLine ? 1 : state.quote + 1;
+      if (modeCfg.highlightFormatting) state.formatting = "quote";
+      stream.eatSpace();
+      return getType(state);
+    } else if (!isHr && !state.setext && firstTokenOnLine && state.indentation <= maxNonCodeIndentation && (match = stream.match(listRE))) {
+      var listType = match[1] ? "ol" : "ul";
+
+      state.indentation = lineIndentation + stream.current().length;
+      state.list = true;
+      state.quote = 0;
+
+      // Add this list item's content's indentation to the stack
+      state.listStack.push(state.indentation);
+
+      if (modeCfg.taskLists && stream.match(taskListRE, false)) {
+        state.taskList = true;
+      }
+      state.f = state.inline;
+      if (modeCfg.highlightFormatting) state.formatting = ["list", "list-" + listType];
+      return getType(state);
+    } else if (firstTokenOnLine && state.indentation <= maxNonCodeIndentation && (match = stream.match(fencedCodeRE, true))) {
+      state.quote = 0;
+      state.fencedEndRE = new RegExp(match[1] + "+ *$");
+      // try switching mode
+      state.localMode = modeCfg.fencedCodeBlockHighlighting && getMode(match[2]);
+      if (state.localMode) state.localState = CodeMirror.startState(state.localMode);
+      state.f = state.block = local;
+      if (modeCfg.highlightFormatting) state.formatting = "code-block";
+      state.code = -1
+      return getType(state);
+    // SETEXT has lowest block-scope precedence after HR, so check it after
+    //  the others (code, blockquote, list...)
+    } else if (
+      // if setext set, indicates line after ---/===
+      state.setext || (
+        // line before ---/===
+        (!allowsInlineContinuation || !prevLineIsList) && !state.quote && state.list === false &&
+        !state.code && !isHr && !linkDefRE.test(stream.string) &&
+        (match = stream.lookAhead(1)) && (match = match.match(setextHeaderRE))
+      )
+    ) {
+      if ( !state.setext ) {
+        state.header = match[0].charAt(0) == '=' ? 1 : 2;
+        state.setext = state.header;
+      } else {
+        state.header = state.setext;
+        // has no effect on type so we can reset it now
+        state.setext = 0;
+        stream.skipToEnd();
+        if (modeCfg.highlightFormatting) state.formatting = "header";
+      }
+      state.thisLine.header = true;
+      state.f = state.inline;
+      return getType(state);
+    } else if (isHr) {
+      stream.skipToEnd();
+      state.hr = true;
+      state.thisLine.hr = true;
+      return tokenTypes.hr;
+    } else if (stream.peek() === '[') {
+      return switchInline(stream, state, footnoteLink);
+    }
+
+    return switchInline(stream, state, state.inline);
+  }
+
+  function htmlBlock(stream, state) {
+    var style = htmlMode.token(stream, state.htmlState);
+    if (!htmlModeMissing) {
+      var inner = CodeMirror.innerMode(htmlMode, state.htmlState)
+      if ((inner.mode.name == "xml" && inner.state.tagStart === null &&
+           (!inner.state.context && inner.state.tokenize.isInText)) ||
+          (state.md_inside && stream.current().indexOf(">") > -1)) {
+        state.f = inlineNormal;
+        state.block = blockNormal;
+        state.htmlState = null;
+      }
+    }
+    return style;
+  }
+
+  function local(stream, state) {
+    var currListInd = state.listStack[state.listStack.length - 1] || 0;
+    var hasExitedList = state.indentation < currListInd;
+    var maxFencedEndInd = currListInd + 3;
+    if (state.fencedEndRE && state.indentation <= maxFencedEndInd && (hasExitedList || stream.match(state.fencedEndRE))) {
+      if (modeCfg.highlightFormatting) state.formatting = "code-block";
+      var returnType;
+      if (!hasExitedList) returnType = getType(state)
+      state.localMode = state.localState = null;
+      state.block = blockNormal;
+      state.f = inlineNormal;
+      state.fencedEndRE = null;
+      state.code = 0
+      state.thisLine.fencedCodeEnd = true;
+      if (hasExitedList) return switchBlock(stream, state, state.block);
+      return returnType;
+    } else if (state.localMode) {
+      return state.localMode.token(stream, state.localState);
+    } else {
+      stream.skipToEnd();
+      return tokenTypes.code;
+    }
+  }
+
+  // Inline
+  function getType(state) {
+    var styles = [];
+
+    if (state.formatting) {
+      styles.push(tokenTypes.formatting);
+
+      if (typeof state.formatting === "string") state.formatting = [state.formatting];
+
+      for (var i = 0; i < state.formatting.length; i++) {
+        styles.push(tokenTypes.formatting + "-" + state.formatting[i]);
+
+        if (state.formatting[i] === "header") {
+          styles.push(tokenTypes.formatting + "-" + state.formatting[i] + "-" + state.header);
+        }
+
+        // Add `formatting-quote` and `formatting-quote-#` for blockquotes
+        // Add `error` instead if the maximum blockquote nesting depth is passed
+        if (state.formatting[i] === "quote") {
+          if (!modeCfg.maxBlockquoteDepth || modeCfg.maxBlockquoteDepth >= state.quote) {
+            styles.push(tokenTypes.formatting + "-" + state.formatting[i] + "-" + state.quote);
+          } else {
+            styles.push("error");
+          }
+        }
+      }
+    }
+
+    if (state.taskOpen) {
+      styles.push("meta");
+      return styles.length ? styles.join(' ') : null;
+    }
+    if (state.taskClosed) {
+      styles.push("property");
+      return styles.length ? styles.join(' ') : null;
+    }
+
+    if (state.linkHref) {
+      styles.push(tokenTypes.linkHref, "url");
+    } else { // Only apply inline styles to non-url text
+      if (state.strong) { styles.push(tokenTypes.strong); }
+      if (state.em) { styles.push(tokenTypes.em); }
+      if (state.strikethrough) { styles.push(tokenTypes.strikethrough); }
+      if (state.emoji) { styles.push(tokenTypes.emoji); }
+      if (state.linkText) { styles.push(tokenTypes.linkText); }
+      if (state.code) { styles.push(tokenTypes.code); }
+      if (state.image) { styles.push(tokenTypes.image); }
+      if (state.imageAltText) { styles.push(tokenTypes.imageAltText, "link"); }
+      if (state.imageMarker) { styles.push(tokenTypes.imageMarker); }
+    }
+
+    if (state.header) { styles.push(tokenTypes.header, tokenTypes.header + "-" + state.header); }
+
+    if (state.quote) {
+      styles.push(tokenTypes.quote);
+
+      // Add `quote-#` where the maximum for `#` is modeCfg.maxBlockquoteDepth
+      if (!modeCfg.maxBlockquoteDepth || modeCfg.maxBlockquoteDepth >= state.quote) {
+        styles.push(tokenTypes.quote + "-" + state.quote);
+      } else {
+        styles.push(tokenTypes.quote + "-" + modeCfg.maxBlockquoteDepth);
+      }
+    }
+
+    if (state.list !== false) {
+      var listMod = (state.listStack.length - 1) % 3;
+      if (!listMod) {
+        styles.push(tokenTypes.list1);
+      } else if (listMod === 1) {
+        styles.push(tokenTypes.list2);
+      } else {
+        styles.push(tokenTypes.list3);
+      }
+    }
+
+    if (state.trailingSpaceNewLine) {
+      styles.push("trailing-space-new-line");
+    } else if (state.trailingSpace) {
+      styles.push("trailing-space-" + (state.trailingSpace % 2 ? "a" : "b"));
+    }
+
+    return styles.length ? styles.join(' ') : null;
+  }
+
+  function handleText(stream, state) {
+    if (stream.match(textRE, true)) {
+      return getType(state);
+    }
+    return undefined;
+  }
+
+  function inlineNormal(stream, state) {
+    var style = state.text(stream, state);
+    if (typeof style !== 'undefined')
+      return style;
+
+    if (state.list) { // List marker (*, +, -, 1., etc)
+      state.list = null;
+      return getType(state);
+    }
+
+    if (state.taskList) {
+      var taskOpen = stream.match(taskListRE, true)[1] === " ";
+      if (taskOpen) state.taskOpen = true;
+      else state.taskClosed = true;
+      if (modeCfg.highlightFormatting) state.formatting = "task";
+      state.taskList = false;
+      return getType(state);
+    }
+
+    state.taskOpen = false;
+    state.taskClosed = false;
+
+    if (state.header && stream.match(/^#+$/, true)) {
+      if (modeCfg.highlightFormatting) state.formatting = "header";
+      return getType(state);
+    }
+
+    var ch = stream.next();
+
+    // Matches link titles present on next line
+    if (state.linkTitle) {
+      state.linkTitle = false;
+      var matchCh = ch;
+      if (ch === '(') {
+        matchCh = ')';
+      }
+      matchCh = (matchCh+'').replace(/([.?*+^\[\]\\(){}|-])/g, "\\$1");
+      var regex = '^\\s*(?:[^' + matchCh + '\\\\]+|\\\\\\\\|\\\\.)' + matchCh;
+      if (stream.match(new RegExp(regex), true)) {
+        return tokenTypes.linkHref;
+      }
+    }
+
+    // If this block is changed, it may need to be updated in GFM mode
+    if (ch === '`') {
+      var previousFormatting = state.formatting;
+      if (modeCfg.highlightFormatting) state.formatting = "code";
+      stream.eatWhile('`');
+      var count = stream.current().length
+      if (state.code == 0 && (!state.quote || count == 1)) {
+        state.code = count
+        return getType(state)
+      } else if (count == state.code) { // Must be exact
+        var t = getType(state)
+        state.code = 0
+        return t
+      } else {
+        state.formatting = previousFormatting
+        return getType(state)
+      }
+    } else if (state.code) {
+      return getType(state);
+    }
+
+    if (ch === '\\') {
+      stream.next();
+      if (modeCfg.highlightFormatting) {
+        var type = getType(state);
+        var formattingEscape = tokenTypes.formatting + "-escape";
+        return type ? type + " " + formattingEscape : formattingEscape;
+      }
+    }
+
+    if (ch === '!' && stream.match(/\[[^\]]*\] ?(?:\(|\[)/, false)) {
+      state.imageMarker = true;
+      state.image = true;
+      if (modeCfg.highlightFormatting) state.formatting = "image";
+      return getType(state);
+    }
+
+    if (ch === '[' && state.imageMarker && stream.match(/[^\]]*\](\(.*?\)| ?\[.*?\])/, false)) {
+      state.imageMarker = false;
+      state.imageAltText = true
+      if (modeCfg.highlightFormatting) state.formatting = "image";
+      return getType(state);
+    }
+
+    if (ch === ']' && state.imageAltText) {
+      if (modeCfg.highlightFormatting) state.formatting = "image";
+      var type = getType(state);
+      state.imageAltText = false;
+      state.image = false;
+      state.inline = state.f = linkHref;
+      return type;
+    }
+
+    if (ch === '[' && !state.image) {
+      state.linkText = true;
+      if (modeCfg.highlightFormatting) state.formatting = "link";
+      return getType(state);
+    }
+
+    if (ch === ']' && state.linkText) {
+      if (modeCfg.highlightFormatting) state.formatting = "link";
+      var type = getType(state);
+      state.linkText = false;
+      state.inline = state.f = stream.match(/\(.*?\)| ?\[.*?\]/, false) ? linkHref : inlineNormal
+      return type;
+    }
+
+    if (ch === '<' && stream.match(/^(https?|ftps?):\/\/(?:[^\\>]|\\.)+>/, false)) {
+      state.f = state.inline = linkInline;
+      if (modeCfg.highlightFormatting) state.formatting = "link";
+      var type = getType(state);
+      if (type){
+        type += " ";
+      } else {
+        type = "";
+      }
+      return type + tokenTypes.linkInline;
+    }
+
+    if (ch === '<' && stream.match(/^[^> \\]+@(?:[^\\>]|\\.)+>/, false)) {
+      state.f = state.inline = linkInline;
+      if (modeCfg.highlightFormatting) state.formatting = "link";
+      var type = getType(state);
+      if (type){
+        type += " ";
+      } else {
+        type = "";
+      }
+      return type + tokenTypes.linkEmail;
+    }
+
+    if (modeCfg.xml && ch === '<' && stream.match(/^(!--|\?|!\[CDATA\[|[a-z][a-z0-9-]*(?:\s+[a-z_:.\-]+(?:\s*=\s*[^>]+)?)*\s*(?:>|$))/i, false)) {
+      var end = stream.string.indexOf(">", stream.pos);
+      if (end != -1) {
+        var atts = stream.string.substring(stream.start, end);
+        if (/markdown\s*=\s*('|"){0,1}1('|"){0,1}/.test(atts)) state.md_inside = true;
+      }
+      stream.backUp(1);
+      state.htmlState = CodeMirror.startState(htmlMode);
+      return switchBlock(stream, state, htmlBlock);
+    }
+
+    if (modeCfg.xml && ch === '<' && stream.match(/^\/\w*?>/)) {
+      state.md_inside = false;
+      return "tag";
+    } else if (ch === "*" || ch === "_") {
+      var len = 1, before = stream.pos == 1 ? " " : stream.string.charAt(stream.pos - 2)
+      while (len < 3 && stream.eat(ch)) len++
+      var after = stream.peek() || " "
+      // See http://spec.commonmark.org/0.27/#emphasis-and-strong-emphasis
+      var leftFlanking = !/\s/.test(after) && (!punctuation.test(after) || /\s/.test(before) || punctuation.test(before))
+      var rightFlanking = !/\s/.test(before) && (!punctuation.test(before) || /\s/.test(after) || punctuation.test(after))
+      var setEm = null, setStrong = null
+      if (len % 2) { // Em
+        if (!state.em && leftFlanking && (ch === "*" || !rightFlanking || punctuation.test(before)))
+          setEm = true
+        else if (state.em == ch && rightFlanking && (ch === "*" || !leftFlanking || punctuation.test(after)))
+          setEm = false
+      }
+      if (len > 1) { // Strong
+        if (!state.strong && leftFlanking && (ch === "*" || !rightFlanking || punctuation.test(before)))
+          setStrong = true
+        else if (state.strong == ch && rightFlanking && (ch === "*" || !leftFlanking || punctuation.test(after)))
+          setStrong = false
+      }
+      if (setStrong != null || setEm != null) {
+        if (modeCfg.highlightFormatting) state.formatting = setEm == null ? "strong" : setStrong == null ? "em" : "strong em"
+        if (setEm === true) state.em = ch
+        if (setStrong === true) state.strong = ch
+        var t = getType(state)
+        if (setEm === false) state.em = false
+        if (setStrong === false) state.strong = false
+        return t
+      }
+    } else if (ch === ' ') {
+      if (stream.eat('*') || stream.eat('_')) { // Probably surrounded by spaces
+        if (stream.peek() === ' ') { // Surrounded by spaces, ignore
+          return getType(state);
+        } else { // Not surrounded by spaces, back up pointer
+          stream.backUp(1);
+        }
+      }
+    }
+
+    if (modeCfg.strikethrough) {
+      if (ch === '~' && stream.eatWhile(ch)) {
+        if (state.strikethrough) {// Remove strikethrough
+          if (modeCfg.highlightFormatting) state.formatting = "strikethrough";
+          var t = getType(state);
+          state.strikethrough = false;
+          return t;
+        } else if (stream.match(/^[^\s]/, false)) {// Add strikethrough
+          state.strikethrough = true;
+          if (modeCfg.highlightFormatting) state.formatting = "strikethrough";
+          return getType(state);
+        }
+      } else if (ch === ' ') {
+        if (stream.match(/^~~/, true)) { // Probably surrounded by space
+          if (stream.peek() === ' ') { // Surrounded by spaces, ignore
+            return getType(state);
+          } else { // Not surrounded by spaces, back up pointer
+            stream.backUp(2);
+          }
+        }
+      }
+    }
+
+    if (modeCfg.emoji && ch === ":" && stream.match(/^[a-z_\d+-]+:/)) {
+      state.emoji = true;
+      if (modeCfg.highlightFormatting) state.formatting = "emoji";
+      var retType = getType(state);
+      state.emoji = false;
+      return retType;
+    }
+
+    if (ch === ' ') {
+      if (stream.match(/^ +$/, false)) {
+        state.trailingSpace++;
+      } else if (state.trailingSpace) {
+        state.trailingSpaceNewLine = true;
+      }
+    }
+
+    return getType(state);
+  }
+
+  function linkInline(stream, state) {
+    var ch = stream.next();
+
+    if (ch === ">") {
+      state.f = state.inline = inlineNormal;
+      if (modeCfg.highlightFormatting) state.formatting = "link";
+      var type = getType(state);
+      if (type){
+        type += " ";
+      } else {
+        type = "";
+      }
+      return type + tokenTypes.linkInline;
+    }
+
+    stream.match(/^[^>]+/, true);
+
+    return tokenTypes.linkInline;
+  }
+
+  function linkHref(stream, state) {
+    // Check if space, and return NULL if so (to avoid marking the space)
+    if(stream.eatSpace()){
+      return null;
+    }
+    var ch = stream.next();
+    if (ch === '(' || ch === '[') {
+      state.f = state.inline = getLinkHrefInside(ch === "(" ? ")" : "]");
+      if (modeCfg.highlightFormatting) state.formatting = "link-string";
+      state.linkHref = true;
+      return getType(state);
+    }
+    return 'error';
+  }
+
+  var linkRE = {
+    ")": /^(?:[^\\\(\)]|\\.|\((?:[^\\\(\)]|\\.)*\))*?(?=\))/,
+    "]": /^(?:[^\\\[\]]|\\.|\[(?:[^\\\[\]]|\\.)*\])*?(?=\])/
+  }
+
+  function getLinkHrefInside(endChar) {
+    return function(stream, state) {
+      var ch = stream.next();
+
+      if (ch === endChar) {
+        state.f = state.inline = inlineNormal;
+        if (modeCfg.highlightFormatting) state.formatting = "link-string";
+        var returnState = getType(state);
+        state.linkHref = false;
+        return returnState;
+      }
+
+      stream.match(linkRE[endChar])
+      state.linkHref = true;
+      return getType(state);
+    };
+  }
+
+  function footnoteLink(stream, state) {
+    if (stream.match(/^([^\]\\]|\\.)*\]:/, false)) {
+      state.f = footnoteLinkInside;
+      stream.next(); // Consume [
+      if (modeCfg.highlightFormatting) state.formatting = "link";
+      state.linkText = true;
+      return getType(state);
+    }
+    return switchInline(stream, state, inlineNormal);
+  }
+
+  function footnoteLinkInside(stream, state) {
+    if (stream.match(/^\]:/, true)) {
+      state.f = state.inline = footnoteUrl;
+      if (modeCfg.highlightFormatting) state.formatting = "link";
+      var returnType = getType(state);
+      state.linkText = false;
+      return returnType;
+    }
+
+    stream.match(/^([^\]\\]|\\.)+/, true);
+
+    return tokenTypes.linkText;
+  }
+
+  function footnoteUrl(stream, state) {
+    // Check if space, and return NULL if so (to avoid marking the space)
+    if(stream.eatSpace()){
+      return null;
+    }
+    // Match URL
+    stream.match(/^[^\s]+/, true);
+    // Check for link title
+    if (stream.peek() === undefined) { // End of line, set flag to check next line
+      state.linkTitle = true;
+    } else { // More content on line, check if link title
+      stream.match(/^(?:\s+(?:"(?:[^"\\]|\\\\|\\.)+"|'(?:[^'\\]|\\\\|\\.)+'|\((?:[^)\\]|\\\\|\\.)+\)))?/, true);
+    }
+    state.f = state.inline = inlineNormal;
+    return tokenTypes.linkHref + " url";
+  }
+
+  var mode = {
+    startState: function() {
+      return {
+        f: blockNormal,
+
+        prevLine: {stream: null},
+        thisLine: {stream: null},
+
+        block: blockNormal,
+        htmlState: null,
+        indentation: 0,
+
+        inline: inlineNormal,
+        text: handleText,
+
+        formatting: false,
+        linkText: false,
+        linkHref: false,
+        linkTitle: false,
+        code: 0,
+        em: false,
+        strong: false,
+        header: 0,
+        setext: 0,
+        hr: false,
+        taskList: false,
+        list: false,
+        listStack: [],
+        quote: 0,
+        trailingSpace: 0,
+        trailingSpaceNewLine: false,
+        strikethrough: false,
+        emoji: false,
+        fencedEndRE: null
+      };
+    },
+
+    copyState: function(s) {
+      return {
+        f: s.f,
+
+        prevLine: s.prevLine,
+        thisLine: s.thisLine,
+
+        block: s.block,
+        htmlState: s.htmlState && CodeMirror.copyState(htmlMode, s.htmlState),
+        indentation: s.indentation,
+
+        localMode: s.localMode,
+        localState: s.localMode ? CodeMirror.copyState(s.localMode, s.localState) : null,
+
+        inline: s.inline,
+        text: s.text,
+        formatting: false,
+        linkText: s.linkText,
+        linkTitle: s.linkTitle,
+        linkHref: s.linkHref,
+        code: s.code,
+        em: s.em,
+        strong: s.strong,
+        strikethrough: s.strikethrough,
+        emoji: s.emoji,
+        header: s.header,
+        setext: s.setext,
+        hr: s.hr,
+        taskList: s.taskList,
+        list: s.list,
+        listStack: s.listStack.slice(0),
+        quote: s.quote,
+        indentedCode: s.indentedCode,
+        trailingSpace: s.trailingSpace,
+        trailingSpaceNewLine: s.trailingSpaceNewLine,
+        md_inside: s.md_inside,
+        fencedEndRE: s.fencedEndRE
+      };
+    },
+
+    token: function(stream, state) {
+
+      // Reset state.formatting
+      state.formatting = false;
+
+      if (stream != state.thisLine.stream) {
+        state.header = 0;
+        state.hr = false;
+
+        if (stream.match(/^\s*$/, true)) {
+          blankLine(state);
+          return null;
+        }
+
+        state.prevLine = state.thisLine
+        state.thisLine = {stream: stream}
+
+        // Reset state.taskList
+        state.taskList = false;
+
+        // Reset state.trailingSpace
+        state.trailingSpace = 0;
+        state.trailingSpaceNewLine = false;
+
+        if (!state.localState) {
+          state.f = state.block;
+          if (state.f != htmlBlock) {
+            var indentation = stream.match(/^\s*/, true)[0].replace(/\t/g, expandedTab).length;
+            state.indentation = indentation;
+            state.indentationDiff = null;
+            if (indentation > 0) return null;
+          }
+        }
+      }
+      return state.f(stream, state);
+    },
+
+    innerMode: function(state) {
+      if (state.block == htmlBlock) return {state: state.htmlState, mode: htmlMode};
+      if (state.localState) return {state: state.localState, mode: state.localMode};
+      return {state: state, mode: mode};
+    },
+
+    indent: function(state, textAfter, line) {
+      if (state.block == htmlBlock && htmlMode.indent) return htmlMode.indent(state.htmlState, textAfter, line)
+      if (state.localState && state.localMode.indent) return state.localMode.indent(state.localState, textAfter, line)
+      return CodeMirror.Pass
+    },
+
+    blankLine: blankLine,
+
+    getType: getType,
+
+    closeBrackets: "()[]{}''\"\"``",
+    fold: "markdown"
+  };
+  return mode;
+}, "xml");
+
+CodeMirror.defineMIME("text/markdown", "markdown");
+
+CodeMirror.defineMIME("text/x-markdown", "markdown");
+
+});
+
+
+/***/ }),
+/* 12 */
+/***/ (function(module, exports, __webpack_require__) {
+
+// CodeMirror, copyright (c) by Marijn Haverbeke and others
+// Distributed under an MIT license: http://codemirror.net/LICENSE
+
+(function(mod) {
+  if (true) // CommonJS
+    mod(__webpack_require__(4));
+  else if (typeof define == "function" && define.amd) // AMD
+    define(["../../lib/codemirror"], mod);
+  else // Plain browser env
+    mod(CodeMirror);
+})(function(CodeMirror) {
+"use strict";
+
+var htmlConfig = {
+  autoSelfClosers: {'area': true, 'base': true, 'br': true, 'col': true, 'command': true,
+                    'embed': true, 'frame': true, 'hr': true, 'img': true, 'input': true,
+                    'keygen': true, 'link': true, 'meta': true, 'param': true, 'source': true,
+                    'track': true, 'wbr': true, 'menuitem': true},
+  implicitlyClosed: {'dd': true, 'li': true, 'optgroup': true, 'option': true, 'p': true,
+                     'rp': true, 'rt': true, 'tbody': true, 'td': true, 'tfoot': true,
+                     'th': true, 'tr': true},
+  contextGrabbers: {
+    'dd': {'dd': true, 'dt': true},
+    'dt': {'dd': true, 'dt': true},
+    'li': {'li': true},
+    'option': {'option': true, 'optgroup': true},
+    'optgroup': {'optgroup': true},
+    'p': {'address': true, 'article': true, 'aside': true, 'blockquote': true, 'dir': true,
+          'div': true, 'dl': true, 'fieldset': true, 'footer': true, 'form': true,
+          'h1': true, 'h2': true, 'h3': true, 'h4': true, 'h5': true, 'h6': true,
+          'header': true, 'hgroup': true, 'hr': true, 'menu': true, 'nav': true, 'ol': true,
+          'p': true, 'pre': true, 'section': true, 'table': true, 'ul': true},
+    'rp': {'rp': true, 'rt': true},
+    'rt': {'rp': true, 'rt': true},
+    'tbody': {'tbody': true, 'tfoot': true},
+    'td': {'td': true, 'th': true},
+    'tfoot': {'tbody': true},
+    'th': {'td': true, 'th': true},
+    'thead': {'tbody': true, 'tfoot': true},
+    'tr': {'tr': true}
+  },
+  doNotIndent: {"pre": true},
+  allowUnquoted: true,
+  allowMissing: true,
+  caseFold: true
+}
+
+var xmlConfig = {
+  autoSelfClosers: {},
+  implicitlyClosed: {},
+  contextGrabbers: {},
+  doNotIndent: {},
+  allowUnquoted: false,
+  allowMissing: false,
+  allowMissingTagName: false,
+  caseFold: false
+}
+
+CodeMirror.defineMode("xml", function(editorConf, config_) {
+  var indentUnit = editorConf.indentUnit
+  var config = {}
+  var defaults = config_.htmlMode ? htmlConfig : xmlConfig
+  for (var prop in defaults) config[prop] = defaults[prop]
+  for (var prop in config_) config[prop] = config_[prop]
+
+  // Return variables for tokenizers
+  var type, setStyle;
+
+  function inText(stream, state) {
+    function chain(parser) {
+      state.tokenize = parser;
+      return parser(stream, state);
+    }
+
+    var ch = stream.next();
+    if (ch == "<") {
+      if (stream.eat("!")) {
+        if (stream.eat("[")) {
+          if (stream.match("CDATA[")) return chain(inBlock("atom", "]]>"));
+          else return null;
+        } else if (stream.match("--")) {
+          return chain(inBlock("comment", "-->"));
+        } else if (stream.match("DOCTYPE", true, true)) {
+          stream.eatWhile(/[\w\._\-]/);
+          return chain(doctype(1));
+        } else {
+          return null;
+        }
+      } else if (stream.eat("?")) {
+        stream.eatWhile(/[\w\._\-]/);
+        state.tokenize = inBlock("meta", "?>");
+        return "meta";
+      } else {
+        type = stream.eat("/") ? "closeTag" : "openTag";
+        state.tokenize = inTag;
+        return "tag bracket";
+      }
+    } else if (ch == "&") {
+      var ok;
+      if (stream.eat("#")) {
+        if (stream.eat("x")) {
+          ok = stream.eatWhile(/[a-fA-F\d]/) && stream.eat(";");
+        } else {
+          ok = stream.eatWhile(/[\d]/) && stream.eat(";");
+        }
+      } else {
+        ok = stream.eatWhile(/[\w\.\-:]/) && stream.eat(";");
+      }
+      return ok ? "atom" : "error";
+    } else {
+      stream.eatWhile(/[^&<]/);
+      return null;
+    }
+  }
+  inText.isInText = true;
+
+  function inTag(stream, state) {
+    var ch = stream.next();
+    if (ch == ">" || (ch == "/" && stream.eat(">"))) {
+      state.tokenize = inText;
+      type = ch == ">" ? "endTag" : "selfcloseTag";
+      return "tag bracket";
+    } else if (ch == "=") {
+      type = "equals";
+      return null;
+    } else if (ch == "<") {
+      state.tokenize = inText;
+      state.state = baseState;
+      state.tagName = state.tagStart = null;
+      var next = state.tokenize(stream, state);
+      return next ? next + " tag error" : "tag error";
+    } else if (/[\'\"]/.test(ch)) {
+      state.tokenize = inAttribute(ch);
+      state.stringStartCol = stream.column();
+      return state.tokenize(stream, state);
+    } else {
+      stream.match(/^[^\s\u00a0=<>\"\']*[^\s\u00a0=<>\"\'\/]/);
+      return "word";
+    }
+  }
+
+  function inAttribute(quote) {
+    var closure = function(stream, state) {
+      while (!stream.eol()) {
+        if (stream.next() == quote) {
+          state.tokenize = inTag;
+          break;
+        }
+      }
+      return "string";
+    };
+    closure.isInAttribute = true;
+    return closure;
+  }
+
+  function inBlock(style, terminator) {
+    return function(stream, state) {
+      while (!stream.eol()) {
+        if (stream.match(terminator)) {
+          state.tokenize = inText;
+          break;
+        }
+        stream.next();
+      }
+      return style;
+    }
+  }
+
+  function doctype(depth) {
+    return function(stream, state) {
+      var ch;
+      while ((ch = stream.next()) != null) {
+        if (ch == "<") {
+          state.tokenize = doctype(depth + 1);
+          return state.tokenize(stream, state);
+        } else if (ch == ">") {
+          if (depth == 1) {
+            state.tokenize = inText;
+            break;
+          } else {
+            state.tokenize = doctype(depth - 1);
+            return state.tokenize(stream, state);
+          }
+        }
+      }
+      return "meta";
+    };
+  }
+
+  function Context(state, tagName, startOfLine) {
+    this.prev = state.context;
+    this.tagName = tagName;
+    this.indent = state.indented;
+    this.startOfLine = startOfLine;
+    if (config.doNotIndent.hasOwnProperty(tagName) || (state.context && state.context.noIndent))
+      this.noIndent = true;
+  }
+  function popContext(state) {
+    if (state.context) state.context = state.context.prev;
+  }
+  function maybePopContext(state, nextTagName) {
+    var parentTagName;
+    while (true) {
+      if (!state.context) {
+        return;
+      }
+      parentTagName = state.context.tagName;
+      if (!config.contextGrabbers.hasOwnProperty(parentTagName) ||
+          !config.contextGrabbers[parentTagName].hasOwnProperty(nextTagName)) {
+        return;
+      }
+      popContext(state);
+    }
+  }
+
+  function baseState(type, stream, state) {
+    if (type == "openTag") {
+      state.tagStart = stream.column();
+      return tagNameState;
+    } else if (type == "closeTag") {
+      return closeTagNameState;
+    } else {
+      return baseState;
+    }
+  }
+  function tagNameState(type, stream, state) {
+    if (type == "word") {
+      state.tagName = stream.current();
+      setStyle = "tag";
+      return attrState;
+    } else if (config.allowMissingTagName && type == "endTag") {
+      setStyle = "tag bracket";
+      return attrState(type, stream, state);
+    } else {
+      setStyle = "error";
+      return tagNameState;
+    }
+  }
+  function closeTagNameState(type, stream, state) {
+    if (type == "word") {
+      var tagName = stream.current();
+      if (state.context && state.context.tagName != tagName &&
+          config.implicitlyClosed.hasOwnProperty(state.context.tagName))
+        popContext(state);
+      if ((state.context && state.context.tagName == tagName) || config.matchClosing === false) {
+        setStyle = "tag";
+        return closeState;
+      } else {
+        setStyle = "tag error";
+        return closeStateErr;
+      }
+    } else if (config.allowMissingTagName && type == "endTag") {
+      setStyle = "tag bracket";
+      return closeState(type, stream, state);
+    } else {
+      setStyle = "error";
+      return closeStateErr;
+    }
+  }
+
+  function closeState(type, _stream, state) {
+    if (type != "endTag") {
+      setStyle = "error";
+      return closeState;
+    }
+    popContext(state);
+    return baseState;
+  }
+  function closeStateErr(type, stream, state) {
+    setStyle = "error";
+    return closeState(type, stream, state);
+  }
+
+  function attrState(type, _stream, state) {
+    if (type == "word") {
+      setStyle = "attribute";
+      return attrEqState;
+    } else if (type == "endTag" || type == "selfcloseTag") {
+      var tagName = state.tagName, tagStart = state.tagStart;
+      state.tagName = state.tagStart = null;
+      if (type == "selfcloseTag" ||
+          config.autoSelfClosers.hasOwnProperty(tagName)) {
+        maybePopContext(state, tagName);
+      } else {
+        maybePopContext(state, tagName);
+        state.context = new Context(state, tagName, tagStart == state.indented);
+      }
+      return baseState;
+    }
+    setStyle = "error";
+    return attrState;
+  }
+  function attrEqState(type, stream, state) {
+    if (type == "equals") return attrValueState;
+    if (!config.allowMissing) setStyle = "error";
+    return attrState(type, stream, state);
+  }
+  function attrValueState(type, stream, state) {
+    if (type == "string") return attrContinuedState;
+    if (type == "word" && config.allowUnquoted) {setStyle = "string"; return attrState;}
+    setStyle = "error";
+    return attrState(type, stream, state);
+  }
+  function attrContinuedState(type, stream, state) {
+    if (type == "string") return attrContinuedState;
+    return attrState(type, stream, state);
+  }
+
+  return {
+    startState: function(baseIndent) {
+      var state = {tokenize: inText,
+                   state: baseState,
+                   indented: baseIndent || 0,
+                   tagName: null, tagStart: null,
+                   context: null}
+      if (baseIndent != null) state.baseIndent = baseIndent
+      return state
+    },
+
+    token: function(stream, state) {
+      if (!state.tagName && stream.sol())
+        state.indented = stream.indentation();
+
+      if (stream.eatSpace()) return null;
+      type = null;
+      var style = state.tokenize(stream, state);
+      if ((style || type) && style != "comment") {
+        setStyle = null;
+        state.state = state.state(type || style, stream, state);
+        if (setStyle)
+          style = setStyle == "error" ? style + " error" : setStyle;
+      }
+      return style;
+    },
+
+    indent: function(state, textAfter, fullLine) {
+      var context = state.context;
+      // Indent multi-line strings (e.g. css).
+      if (state.tokenize.isInAttribute) {
+        if (state.tagStart == state.indented)
+          return state.stringStartCol + 1;
+        else
+          return state.indented + indentUnit;
+      }
+      if (context && context.noIndent) return CodeMirror.Pass;
+      if (state.tokenize != inTag && state.tokenize != inText)
+        return fullLine ? fullLine.match(/^(\s*)/)[0].length : 0;
+      // Indent the starts of attribute names.
+      if (state.tagName) {
+        if (config.multilineTagIndentPastTag !== false)
+          return state.tagStart + state.tagName.length + 2;
+        else
+          return state.tagStart + indentUnit * (config.multilineTagIndentFactor || 1);
+      }
+      if (config.alignCDATA && /<!\[CDATA\[/.test(textAfter)) return 0;
+      var tagAfter = textAfter && /^<(\/)?([\w_:\.-]*)/.exec(textAfter);
+      if (tagAfter && tagAfter[1]) { // Closing tag spotted
+        while (context) {
+          if (context.tagName == tagAfter[2]) {
+            context = context.prev;
+            break;
+          } else if (config.implicitlyClosed.hasOwnProperty(context.tagName)) {
+            context = context.prev;
+          } else {
+            break;
+          }
+        }
+      } else if (tagAfter) { // Opening tag spotted
+        while (context) {
+          var grabbers = config.contextGrabbers[context.tagName];
+          if (grabbers && grabbers.hasOwnProperty(tagAfter[2]))
+            context = context.prev;
+          else
+            break;
+        }
+      }
+      while (context && context.prev && !context.startOfLine)
+        context = context.prev;
+      if (context) return context.indent + indentUnit;
+      else return state.baseIndent || 0;
+    },
+
+    electricInput: /<\/[\s\w:]+>$/,
+    blockCommentStart: "<!--",
+    blockCommentEnd: "-->",
+
+    configuration: config.htmlMode ? "html" : "xml",
+    helperType: config.htmlMode ? "html" : "xml",
+
+    skipAttribute: function(state) {
+      if (state.state == attrValueState)
+        state.state = attrState
+    }
+  };
+});
+
+CodeMirror.defineMIME("text/xml", "xml");
+CodeMirror.defineMIME("application/xml", "xml");
+if (!CodeMirror.mimeModes.hasOwnProperty("text/html"))
+  CodeMirror.defineMIME("text/html", {name: "xml", htmlMode: true});
+
+});
+
+
+/***/ }),
+/* 13 */
+/***/ (function(module, exports, __webpack_require__) {
+
+// CodeMirror, copyright (c) by Marijn Haverbeke and others
+// Distributed under an MIT license: http://codemirror.net/LICENSE
+
+// Utility function that allows modes to be combined. The mode given
+// as the base argument takes care of most of the normal mode
+// functionality, but a second (typically simple) mode is used, which
+// can override the style of text. Both modes get to parse all of the
+// text, but when both assign a non-null style to a piece of code, the
+// overlay wins, unless the combine argument was true and not overridden,
+// or state.overlay.combineTokens was true, in which case the styles are
+// combined.
+
+(function(mod) {
+  if (true) // CommonJS
+    mod(__webpack_require__(4));
+  else if (typeof define == "function" && define.amd) // AMD
+    define(["../../lib/codemirror"], mod);
+  else // Plain browser env
+    mod(CodeMirror);
+})(function(CodeMirror) {
+"use strict";
+
+CodeMirror.overlayMode = function(base, overlay, combine) {
+  return {
+    startState: function() {
+      return {
+        base: CodeMirror.startState(base),
+        overlay: CodeMirror.startState(overlay),
+        basePos: 0, baseCur: null,
+        overlayPos: 0, overlayCur: null,
+        streamSeen: null
+      };
+    },
+    copyState: function(state) {
+      return {
+        base: CodeMirror.copyState(base, state.base),
+        overlay: CodeMirror.copyState(overlay, state.overlay),
+        basePos: state.basePos, baseCur: null,
+        overlayPos: state.overlayPos, overlayCur: null
+      };
+    },
+
+    token: function(stream, state) {
+      if (stream != state.streamSeen ||
+          Math.min(state.basePos, state.overlayPos) < stream.start) {
+        state.streamSeen = stream;
+        state.basePos = state.overlayPos = stream.start;
+      }
+
+      if (stream.start == state.basePos) {
+        state.baseCur = base.token(stream, state.base);
+        state.basePos = stream.pos;
+      }
+      if (stream.start == state.overlayPos) {
+        stream.pos = stream.start;
+        state.overlayCur = overlay.token(stream, state.overlay);
+        state.overlayPos = stream.pos;
+      }
+      stream.pos = Math.min(state.basePos, state.overlayPos);
+
+      // state.overlay.combineTokens always takes precedence over combine,
+      // unless set to null
+      if (state.overlayCur == null) return state.baseCur;
+      else if (state.baseCur != null &&
+               state.overlay.combineTokens ||
+               combine && state.overlay.combineTokens == null)
+        return state.baseCur + " " + state.overlayCur;
+      else return state.overlayCur;
+    },
+
+    indent: base.indent && function(state, textAfter) {
+      return base.indent(state.base, textAfter);
+    },
+    electricChars: base.electricChars,
+
+    innerMode: function(state) { return {state: state.base, mode: base}; },
+
+    blankLine: function(state) {
+      var baseToken, overlayToken;
+      if (base.blankLine) baseToken = base.blankLine(state.base);
+      if (overlay.blankLine) overlayToken = overlay.blankLine(state.overlay);
+
+      return overlayToken == null ?
+        baseToken :
+        (combine && baseToken != null ? baseToken + " " + overlayToken : overlayToken);
+    }
+  };
+};
+
+});
+
 
 /***/ }),
 /* 14 */
@@ -37542,13 +37542,13 @@ module.exports = function bind(fn, thisArg) {
 "use strict";
 
 
-var utils = __webpack_require__(0);
-var settle = __webpack_require__(96);
-var buildURL = __webpack_require__(98);
-var parseHeaders = __webpack_require__(99);
-var isURLSameOrigin = __webpack_require__(100);
+var utils = __webpack_require__(3);
+var settle = __webpack_require__(126);
+var buildURL = __webpack_require__(128);
+var parseHeaders = __webpack_require__(129);
+var isURLSameOrigin = __webpack_require__(130);
 var createError = __webpack_require__(18);
-var btoa = (typeof window !== 'undefined' && window.btoa && window.btoa.bind(window)) || __webpack_require__(101);
+var btoa = (typeof window !== 'undefined' && window.btoa && window.btoa.bind(window)) || __webpack_require__(131);
 
 module.exports = function xhrAdapter(config) {
   return new Promise(function dispatchXhrRequest(resolve, reject) {
@@ -37645,7 +37645,7 @@ module.exports = function xhrAdapter(config) {
     // This is only done if running in a standard browser environment.
     // Specifically not if we're in a web worker, or react-native.
     if (utils.isStandardBrowserEnv()) {
-      var cookies = __webpack_require__(102);
+      var cookies = __webpack_require__(132);
 
       // Add xsrf header
       var xsrfValue = (config.withCredentials || isURLSameOrigin(config.url)) && config.xsrfCookieName ?
@@ -37729,7 +37729,7 @@ module.exports = function xhrAdapter(config) {
 "use strict";
 
 
-var enhanceError = __webpack_require__(97);
+var enhanceError = __webpack_require__(127);
 
 /**
  * Create an Error with the specified message, config, error code, request and response.
@@ -37790,7 +37790,7 @@ module.exports = Cancel;
 /***/ (function(module, exports, __webpack_require__) {
 
 __webpack_require__(22);
-module.exports = __webpack_require__(125);
+module.exports = __webpack_require__(155);
 
 
 /***/ }),
@@ -37804,10 +37804,10 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_1_vuetify__ = __webpack_require__(25);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_1_vuetify___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_1_vuetify__);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_2__router_router__ = __webpack_require__(26);
-/* harmony import */ var __WEBPACK_IMPORTED_MODULE_3__helpers_User__ = __webpack_require__(68);
-/* harmony import */ var __WEBPACK_IMPORTED_MODULE_4_vue_simplemde__ = __webpack_require__(71);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_3__helpers_User__ = __webpack_require__(98);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_4_vue_simplemde__ = __webpack_require__(101);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_4_vue_simplemde___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_4_vue_simplemde__);
-/* harmony import */ var __WEBPACK_IMPORTED_MODULE_5_marked__ = __webpack_require__(13);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_5_marked__ = __webpack_require__(7);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_5_marked___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_5_marked__);
 
 /**
@@ -37822,7 +37822,7 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
 
 
 
-__webpack_require__(87);
+__webpack_require__(117);
 
 window.Vue = __webpack_require__(6);
 window.User = __WEBPACK_IMPORTED_MODULE_3__helpers_User__["a" /* default */];
@@ -37838,7 +37838,7 @@ __WEBPACK_IMPORTED_MODULE_0_vue___default.a.use(__WEBPACK_IMPORTED_MODULE_4_vue_
  * or customize the JavaScript scaffolding to fit your unique needs.
  */
 
-__WEBPACK_IMPORTED_MODULE_0_vue___default.a.component('AppHome', __webpack_require__(110));
+__WEBPACK_IMPORTED_MODULE_0_vue___default.a.component('AppHome', __webpack_require__(140));
 
 var app = new __WEBPACK_IMPORTED_MODULE_0_vue___default.a({
   el: '#app',
@@ -38106,7 +38106,7 @@ exports.clearImmediate = (typeof self !== "undefined" && self.clearImmediate) ||
     attachTo.clearImmediate = clearImmediate;
 }(typeof self === "undefined" ? typeof global === "undefined" ? this : global : self));
 
-/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(5), __webpack_require__(8)))
+/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(5), __webpack_require__(9)))
 
 /***/ }),
 /* 25 */
@@ -58048,7 +58048,7 @@ module.exports = __WEBPACK_EXTERNAL_MODULE_vue__;
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_0_vue__ = __webpack_require__(6);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_0_vue___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_0_vue__);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_1_vue_router__ = __webpack_require__(27);
-/* harmony import */ var __WEBPACK_IMPORTED_MODULE_2__components_login_Login__ = __webpack_require__(9);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_2__components_login_Login__ = __webpack_require__(10);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_2__components_login_Login___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_2__components_login_Login__);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_3__components_login_Logout__ = __webpack_require__(33);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_3__components_login_Logout___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_3__components_login_Logout__);
@@ -58056,10 +58056,13 @@ module.exports = __WEBPACK_EXTERNAL_MODULE_vue__;
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_4__components_login_Signup___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_4__components_login_Signup__);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_5__components_forum_Forum__ = __webpack_require__(43);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_5__components_forum_Forum___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_5__components_forum_Forum__);
-/* harmony import */ var __WEBPACK_IMPORTED_MODULE_6__components_forum_Read__ = __webpack_require__(53);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_6__components_forum_Read__ = __webpack_require__(58);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_6__components_forum_Read___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_6__components_forum_Read__);
-/* harmony import */ var __WEBPACK_IMPORTED_MODULE_7__components_forum_Create__ = __webpack_require__(63);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_7__components_forum_Create__ = __webpack_require__(88);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_7__components_forum_Create___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_7__components_forum_Create__);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_8__components_category_CreateCategory__ = __webpack_require__(93);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_8__components_category_CreateCategory___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_8__components_category_CreateCategory__);
+
 
 
 
@@ -58071,7 +58074,7 @@ module.exports = __WEBPACK_EXTERNAL_MODULE_vue__;
 
 __WEBPACK_IMPORTED_MODULE_0_vue___default.a.use(__WEBPACK_IMPORTED_MODULE_1_vue_router__["a" /* default */]);
 
-var routes = [{ path: '/login', component: __WEBPACK_IMPORTED_MODULE_2__components_login_Login___default.a }, { path: '/logout', component: __WEBPACK_IMPORTED_MODULE_3__components_login_Logout___default.a }, { path: '/signup', component: __WEBPACK_IMPORTED_MODULE_4__components_login_Signup___default.a }, { path: '/forum', component: __WEBPACK_IMPORTED_MODULE_5__components_forum_Forum___default.a, name: 'forum' }, { path: '/ask', component: __WEBPACK_IMPORTED_MODULE_7__components_forum_Create___default.a }, { path: '/question/:slug', component: __WEBPACK_IMPORTED_MODULE_6__components_forum_Read___default.a, name: 'read' }];
+var routes = [{ path: '/login', component: __WEBPACK_IMPORTED_MODULE_2__components_login_Login___default.a }, { path: '/logout', component: __WEBPACK_IMPORTED_MODULE_3__components_login_Logout___default.a }, { path: '/signup', component: __WEBPACK_IMPORTED_MODULE_4__components_login_Signup___default.a }, { path: '/category', component: __WEBPACK_IMPORTED_MODULE_8__components_category_CreateCategory___default.a }, { path: '/forum', component: __WEBPACK_IMPORTED_MODULE_5__components_forum_Forum___default.a, name: 'forum' }, { path: '/ask', component: __WEBPACK_IMPORTED_MODULE_7__components_forum_Create___default.a }, { path: '/question/:slug', component: __WEBPACK_IMPORTED_MODULE_6__components_forum_Read___default.a, name: 'read' }];
 
 var router = new __WEBPACK_IMPORTED_MODULE_1_vue_router__["a" /* default */]({
   routes: routes, // short for `routes: routes`
@@ -60721,7 +60724,7 @@ var content = __webpack_require__(29);
 if(typeof content === 'string') content = [[module.i, content, '']];
 if(content.locals) module.exports = content.locals;
 // add the styles to the DOM
-var update = __webpack_require__(2)("784082e2", content, false, {});
+var update = __webpack_require__(1)("784082e2", content, false, {});
 // Hot Module Replacement
 if(false) {
  // When the styles change, update the <style> tags
@@ -60740,7 +60743,7 @@ if(false) {
 /* 29 */
 /***/ (function(module, exports, __webpack_require__) {
 
-exports = module.exports = __webpack_require__(1)(false);
+exports = module.exports = __webpack_require__(0)(false);
 // imports
 
 
@@ -60922,7 +60925,7 @@ function injectStyle (ssrContext) {
   if (disposed) return
   __webpack_require__(34)
 }
-var normalizeComponent = __webpack_require__(3)
+var normalizeComponent = __webpack_require__(2)
 /* script */
 var __vue_script__ = __webpack_require__(36)
 /* template */
@@ -60975,7 +60978,7 @@ var content = __webpack_require__(35);
 if(typeof content === 'string') content = [[module.i, content, '']];
 if(content.locals) module.exports = content.locals;
 // add the styles to the DOM
-var update = __webpack_require__(2)("4f82a264", content, false, {});
+var update = __webpack_require__(1)("4f82a264", content, false, {});
 // Hot Module Replacement
 if(false) {
  // When the styles change, update the <style> tags
@@ -60994,7 +60997,7 @@ if(false) {
 /* 35 */
 /***/ (function(module, exports, __webpack_require__) {
 
-exports = module.exports = __webpack_require__(1)(false);
+exports = module.exports = __webpack_require__(0)(false);
 // imports
 
 
@@ -61049,7 +61052,7 @@ function injectStyle (ssrContext) {
   if (disposed) return
   __webpack_require__(39)
 }
-var normalizeComponent = __webpack_require__(3)
+var normalizeComponent = __webpack_require__(2)
 /* script */
 var __vue_script__ = __webpack_require__(41)
 /* template */
@@ -61102,7 +61105,7 @@ var content = __webpack_require__(40);
 if(typeof content === 'string') content = [[module.i, content, '']];
 if(content.locals) module.exports = content.locals;
 // add the styles to the DOM
-var update = __webpack_require__(2)("4410c7c9", content, false, {});
+var update = __webpack_require__(1)("4410c7c9", content, false, {});
 // Hot Module Replacement
 if(false) {
  // When the styles change, update the <style> tags
@@ -61121,7 +61124,7 @@ if(false) {
 /* 40 */
 /***/ (function(module, exports, __webpack_require__) {
 
-exports = module.exports = __webpack_require__(1)(false);
+exports = module.exports = __webpack_require__(0)(false);
 // imports
 
 
@@ -61343,11 +61346,11 @@ function injectStyle (ssrContext) {
   if (disposed) return
   __webpack_require__(44)
 }
-var normalizeComponent = __webpack_require__(3)
+var normalizeComponent = __webpack_require__(2)
 /* script */
 var __vue_script__ = __webpack_require__(46)
 /* template */
-var __vue_template__ = __webpack_require__(52)
+var __vue_template__ = __webpack_require__(57)
 /* template functional */
 var __vue_template_functional__ = false
 /* styles */
@@ -61396,7 +61399,7 @@ var content = __webpack_require__(45);
 if(typeof content === 'string') content = [[module.i, content, '']];
 if(content.locals) module.exports = content.locals;
 // add the styles to the DOM
-var update = __webpack_require__(2)("29c91162", content, false, {});
+var update = __webpack_require__(1)("29c91162", content, false, {});
 // Hot Module Replacement
 if(false) {
  // When the styles change, update the <style> tags
@@ -61415,12 +61418,12 @@ if(false) {
 /* 45 */
 /***/ (function(module, exports, __webpack_require__) {
 
-exports = module.exports = __webpack_require__(1)(false);
+exports = module.exports = __webpack_require__(0)(false);
 // imports
 
 
 // module
-exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", ""]);
+exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", ""]);
 
 // exports
 
@@ -61433,6 +61436,8 @@ exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\
 Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_0__Question__ = __webpack_require__(47);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_0__Question___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_0__Question__);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_1__AppSidebar__ = __webpack_require__(52);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_1__AppSidebar___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_1__AppSidebar__);
 //
 //
 //
@@ -61450,13 +61455,17 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
 //
 //
 //
+//
+//
+
 
 
 
 /* harmony default export */ __webpack_exports__["default"] = ({
   name: 'Forum',
   components: {
-    question: __WEBPACK_IMPORTED_MODULE_0__Question___default.a
+    question: __WEBPACK_IMPORTED_MODULE_0__Question___default.a,
+    AppSidebar: __WEBPACK_IMPORTED_MODULE_1__AppSidebar___default.a
   },
   data: function data() {
     return {
@@ -61483,7 +61492,7 @@ function injectStyle (ssrContext) {
   if (disposed) return
   __webpack_require__(48)
 }
-var normalizeComponent = __webpack_require__(3)
+var normalizeComponent = __webpack_require__(2)
 /* script */
 var __vue_script__ = __webpack_require__(50)
 /* template */
@@ -61536,7 +61545,7 @@ var content = __webpack_require__(49);
 if(typeof content === 'string') content = [[module.i, content, '']];
 if(content.locals) module.exports = content.locals;
 // add the styles to the DOM
-var update = __webpack_require__(2)("5b083fc4", content, false, {});
+var update = __webpack_require__(1)("5b083fc4", content, false, {});
 // Hot Module Replacement
 if(false) {
  // When the styles change, update the <style> tags
@@ -61555,7 +61564,7 @@ if(false) {
 /* 49 */
 /***/ (function(module, exports, __webpack_require__) {
 
-exports = module.exports = __webpack_require__(1)(false);
+exports = module.exports = __webpack_require__(0)(false);
 // imports
 
 
@@ -61611,6 +61620,7 @@ var render = function() {
   var _c = _vm._self._c || _h
   return _c(
     "v-card",
+    { staticClass: "mt-2" },
     [
       _c("v-card-title", { attrs: { "primary-title": "" } }, [
         _c("div", [
@@ -61656,6 +61666,191 @@ if (false) {
 /* 52 */
 /***/ (function(module, exports, __webpack_require__) {
 
+var disposed = false
+function injectStyle (ssrContext) {
+  if (disposed) return
+  __webpack_require__(53)
+}
+var normalizeComponent = __webpack_require__(2)
+/* script */
+var __vue_script__ = __webpack_require__(55)
+/* template */
+var __vue_template__ = __webpack_require__(56)
+/* template functional */
+var __vue_template_functional__ = false
+/* styles */
+var __vue_styles__ = injectStyle
+/* scopeId */
+var __vue_scopeId__ = "data-v-40bd2d60"
+/* moduleIdentifier (server only) */
+var __vue_module_identifier__ = null
+var Component = normalizeComponent(
+  __vue_script__,
+  __vue_template__,
+  __vue_template_functional__,
+  __vue_styles__,
+  __vue_scopeId__,
+  __vue_module_identifier__
+)
+Component.options.__file = "resources/assets/js/components/forum/AppSidebar.vue"
+
+/* hot reload */
+if (false) {(function () {
+  var hotAPI = require("vue-hot-reload-api")
+  hotAPI.install(require("vue"), false)
+  if (!hotAPI.compatible) return
+  module.hot.accept()
+  if (!module.hot.data) {
+    hotAPI.createRecord("data-v-40bd2d60", Component.options)
+  } else {
+    hotAPI.reload("data-v-40bd2d60", Component.options)
+  }
+  module.hot.dispose(function (data) {
+    disposed = true
+  })
+})()}
+
+module.exports = Component.exports
+
+
+/***/ }),
+/* 53 */
+/***/ (function(module, exports, __webpack_require__) {
+
+// style-loader: Adds some css to the DOM by adding a <style> tag
+
+// load the styles
+var content = __webpack_require__(54);
+if(typeof content === 'string') content = [[module.i, content, '']];
+if(content.locals) module.exports = content.locals;
+// add the styles to the DOM
+var update = __webpack_require__(1)("7105f215", content, false, {});
+// Hot Module Replacement
+if(false) {
+ // When the styles change, update the <style> tags
+ if(!content.locals) {
+   module.hot.accept("!!../../../../../node_modules/css-loader/index.js!../../../../../node_modules/vue-loader/lib/style-compiler/index.js?{\"vue\":true,\"id\":\"data-v-40bd2d60\",\"scoped\":true,\"hasInlineConfig\":true}!../../../../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./AppSidebar.vue", function() {
+     var newContent = require("!!../../../../../node_modules/css-loader/index.js!../../../../../node_modules/vue-loader/lib/style-compiler/index.js?{\"vue\":true,\"id\":\"data-v-40bd2d60\",\"scoped\":true,\"hasInlineConfig\":true}!../../../../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./AppSidebar.vue");
+     if(typeof newContent === 'string') newContent = [[module.id, newContent, '']];
+     update(newContent);
+   });
+ }
+ // When the module is disposed, remove the <style> tags
+ module.hot.dispose(function() { update(); });
+}
+
+/***/ }),
+/* 54 */
+/***/ (function(module, exports, __webpack_require__) {
+
+exports = module.exports = __webpack_require__(0)(false);
+// imports
+
+
+// module
+exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", ""]);
+
+// exports
+
+
+/***/ }),
+/* 55 */
+/***/ (function(module, __webpack_exports__, __webpack_require__) {
+
+"use strict";
+Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+
+/* harmony default export */ __webpack_exports__["default"] = ({
+  name: 'AppSidebar',
+  data: function data() {
+    return {
+      categories: {}
+    };
+  },
+  created: function created() {
+    var _this = this;
+
+    axios.get('api/category').then(function (res) {
+      return _this.categories = res.data.data;
+    });
+  }
+});
+
+/***/ }),
+/* 56 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var render = function() {
+  var _vm = this
+  var _h = _vm.$createElement
+  var _c = _vm._self._c || _h
+  return _c(
+    "v-card",
+    [
+      _c(
+        "v-toolbar",
+        { staticClass: "mt-2", attrs: { color: "cyan", dark: "", dense: "" } },
+        [_c("v-toolbar-title", [_vm._v("Categories")])],
+        1
+      ),
+      _vm._v(" "),
+      _c(
+        "v-list",
+        _vm._l(_vm.categories, function(category) {
+          return _c(
+            "v-list-tile",
+            { key: category.id },
+            [
+              _c(
+                "v-list-tile-content",
+                [
+                  _c(
+                    "v-list-tile-title",
+                    { staticStyle: { "text-transform": "capitalize" } },
+                    [_vm._v(_vm._s(category.name.toLowerCase()))]
+                  )
+                ],
+                1
+              )
+            ],
+            1
+          )
+        })
+      )
+    ],
+    1
+  )
+}
+var staticRenderFns = []
+render._withStripped = true
+module.exports = { render: render, staticRenderFns: staticRenderFns }
+if (false) {
+  module.hot.accept()
+  if (module.hot.data) {
+    require("vue-hot-reload-api")      .rerender("data-v-40bd2d60", module.exports)
+  }
+}
+
+/***/ }),
+/* 57 */
+/***/ (function(module, exports, __webpack_require__) {
+
 var render = function() {
   var _vm = this
   var _h = _vm.$createElement
@@ -61678,7 +61873,8 @@ var render = function() {
               })
             })
           ),
-          _vm._v("\n    sidebar\n  ")
+          _vm._v(" "),
+          _c("v-flex", { attrs: { xs4: "" } }, [_c("app-sidebar")], 1)
         ],
         1
       )
@@ -61697,19 +61893,19 @@ if (false) {
 }
 
 /***/ }),
-/* 53 */
+/* 58 */
 /***/ (function(module, exports, __webpack_require__) {
 
 var disposed = false
 function injectStyle (ssrContext) {
   if (disposed) return
-  __webpack_require__(54)
+  __webpack_require__(59)
 }
-var normalizeComponent = __webpack_require__(3)
+var normalizeComponent = __webpack_require__(2)
 /* script */
-var __vue_script__ = __webpack_require__(56)
+var __vue_script__ = __webpack_require__(61)
 /* template */
-var __vue_template__ = __webpack_require__(62)
+var __vue_template__ = __webpack_require__(87)
 /* template functional */
 var __vue_template_functional__ = false
 /* styles */
@@ -61748,17 +61944,17 @@ module.exports = Component.exports
 
 
 /***/ }),
-/* 54 */
+/* 59 */
 /***/ (function(module, exports, __webpack_require__) {
 
 // style-loader: Adds some css to the DOM by adding a <style> tag
 
 // load the styles
-var content = __webpack_require__(55);
+var content = __webpack_require__(60);
 if(typeof content === 'string') content = [[module.i, content, '']];
 if(content.locals) module.exports = content.locals;
 // add the styles to the DOM
-var update = __webpack_require__(2)("0fbc786f", content, false, {});
+var update = __webpack_require__(1)("0fbc786f", content, false, {});
 // Hot Module Replacement
 if(false) {
  // When the styles change, update the <style> tags
@@ -61774,29 +61970,33 @@ if(false) {
 }
 
 /***/ }),
-/* 55 */
+/* 60 */
 /***/ (function(module, exports, __webpack_require__) {
 
-exports = module.exports = __webpack_require__(1)(false);
+exports = module.exports = __webpack_require__(0)(false);
 // imports
 
 
 // module
-exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", ""]);
+exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", ""]);
 
 // exports
 
 
 /***/ }),
-/* 56 */
+/* 61 */
 /***/ (function(module, __webpack_exports__, __webpack_require__) {
 
 "use strict";
 Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
-/* harmony import */ var __WEBPACK_IMPORTED_MODULE_0__ShowQuestion__ = __webpack_require__(57);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_0__ShowQuestion__ = __webpack_require__(62);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_0__ShowQuestion___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_0__ShowQuestion__);
-/* harmony import */ var __WEBPACK_IMPORTED_MODULE_1__EditQuestion__ = __webpack_require__(130);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_1__EditQuestion__ = __webpack_require__(67);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_1__EditQuestion___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_1__EditQuestion__);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_2__reply_Replies__ = __webpack_require__(72);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_2__reply_Replies___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_2__reply_Replies__);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_3__reply_NewReply__ = __webpack_require__(82);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_3__reply_NewReply___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_3__reply_NewReply__);
 //
 //
 //
@@ -61811,6 +62011,15 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
 //
 //
 //
+//
+//
+//
+//
+//
+//
+//
+
+
 
 
 
@@ -61818,11 +62027,14 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
   name: 'Read',
   components: {
     ShowQuestion: __WEBPACK_IMPORTED_MODULE_0__ShowQuestion___default.a,
-    EditQuestion: __WEBPACK_IMPORTED_MODULE_1__EditQuestion___default.a
+    EditQuestion: __WEBPACK_IMPORTED_MODULE_1__EditQuestion___default.a,
+    Replies: __WEBPACK_IMPORTED_MODULE_2__reply_Replies___default.a,
+    NewReply: __WEBPACK_IMPORTED_MODULE_3__reply_NewReply___default.a
   },
   data: function data() {
     return {
       question: null,
+      questionSlug: null,
       editing: false
     };
   },
@@ -61856,19 +62068,19 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
 });
 
 /***/ }),
-/* 57 */
+/* 62 */
 /***/ (function(module, exports, __webpack_require__) {
 
 var disposed = false
 function injectStyle (ssrContext) {
   if (disposed) return
-  __webpack_require__(58)
+  __webpack_require__(63)
 }
-var normalizeComponent = __webpack_require__(3)
+var normalizeComponent = __webpack_require__(2)
 /* script */
-var __vue_script__ = __webpack_require__(60)
+var __vue_script__ = __webpack_require__(65)
 /* template */
-var __vue_template__ = __webpack_require__(61)
+var __vue_template__ = __webpack_require__(66)
 /* template functional */
 var __vue_template_functional__ = false
 /* styles */
@@ -61907,17 +62119,17 @@ module.exports = Component.exports
 
 
 /***/ }),
-/* 58 */
+/* 63 */
 /***/ (function(module, exports, __webpack_require__) {
 
 // style-loader: Adds some css to the DOM by adding a <style> tag
 
 // load the styles
-var content = __webpack_require__(59);
+var content = __webpack_require__(64);
 if(typeof content === 'string') content = [[module.i, content, '']];
 if(content.locals) module.exports = content.locals;
 // add the styles to the DOM
-var update = __webpack_require__(2)("48214b15", content, false, {});
+var update = __webpack_require__(1)("48214b15", content, false, {});
 // Hot Module Replacement
 if(false) {
  // When the styles change, update the <style> tags
@@ -61933,10 +62145,10 @@ if(false) {
 }
 
 /***/ }),
-/* 59 */
+/* 64 */
 /***/ (function(module, exports, __webpack_require__) {
 
-exports = module.exports = __webpack_require__(1)(false);
+exports = module.exports = __webpack_require__(0)(false);
 // imports
 
 
@@ -61947,7 +62159,7 @@ exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\
 
 
 /***/ }),
-/* 60 */
+/* 65 */
 /***/ (function(module, __webpack_exports__, __webpack_require__) {
 
 "use strict";
@@ -62012,7 +62224,7 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
 });
 
 /***/ }),
-/* 61 */
+/* 66 */
 /***/ (function(module, exports, __webpack_require__) {
 
 var render = function() {
@@ -62045,7 +62257,9 @@ var render = function() {
               _vm._v(" "),
               _c("v-spacer"),
               _vm._v(" "),
-              _c("v-btn", { attrs: { color: "teal" } }, [_vm._v("5 Replies")])
+              _c("v-btn", { attrs: { color: "teal", dark: "" } }, [
+                _vm._v(_vm._s(_vm.data.reply_count) + " Replies")
+              ])
             ],
             1
           ),
@@ -62102,7 +62316,860 @@ if (false) {
 }
 
 /***/ }),
-/* 62 */
+/* 67 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var disposed = false
+function injectStyle (ssrContext) {
+  if (disposed) return
+  __webpack_require__(68)
+}
+var normalizeComponent = __webpack_require__(2)
+/* script */
+var __vue_script__ = __webpack_require__(70)
+/* template */
+var __vue_template__ = __webpack_require__(71)
+/* template functional */
+var __vue_template_functional__ = false
+/* styles */
+var __vue_styles__ = injectStyle
+/* scopeId */
+var __vue_scopeId__ = "data-v-33056db5"
+/* moduleIdentifier (server only) */
+var __vue_module_identifier__ = null
+var Component = normalizeComponent(
+  __vue_script__,
+  __vue_template__,
+  __vue_template_functional__,
+  __vue_styles__,
+  __vue_scopeId__,
+  __vue_module_identifier__
+)
+Component.options.__file = "resources/assets/js/components/forum/EditQuestion.vue"
+
+/* hot reload */
+if (false) {(function () {
+  var hotAPI = require("vue-hot-reload-api")
+  hotAPI.install(require("vue"), false)
+  if (!hotAPI.compatible) return
+  module.hot.accept()
+  if (!module.hot.data) {
+    hotAPI.createRecord("data-v-33056db5", Component.options)
+  } else {
+    hotAPI.reload("data-v-33056db5", Component.options)
+  }
+  module.hot.dispose(function (data) {
+    disposed = true
+  })
+})()}
+
+module.exports = Component.exports
+
+
+/***/ }),
+/* 68 */
+/***/ (function(module, exports, __webpack_require__) {
+
+// style-loader: Adds some css to the DOM by adding a <style> tag
+
+// load the styles
+var content = __webpack_require__(69);
+if(typeof content === 'string') content = [[module.i, content, '']];
+if(content.locals) module.exports = content.locals;
+// add the styles to the DOM
+var update = __webpack_require__(1)("e515428a", content, false, {});
+// Hot Module Replacement
+if(false) {
+ // When the styles change, update the <style> tags
+ if(!content.locals) {
+   module.hot.accept("!!../../../../../node_modules/css-loader/index.js!../../../../../node_modules/vue-loader/lib/style-compiler/index.js?{\"vue\":true,\"id\":\"data-v-33056db5\",\"scoped\":true,\"hasInlineConfig\":true}!../../../../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./EditQuestion.vue", function() {
+     var newContent = require("!!../../../../../node_modules/css-loader/index.js!../../../../../node_modules/vue-loader/lib/style-compiler/index.js?{\"vue\":true,\"id\":\"data-v-33056db5\",\"scoped\":true,\"hasInlineConfig\":true}!../../../../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./EditQuestion.vue");
+     if(typeof newContent === 'string') newContent = [[module.id, newContent, '']];
+     update(newContent);
+   });
+ }
+ // When the module is disposed, remove the <style> tags
+ module.hot.dispose(function() { update(); });
+}
+
+/***/ }),
+/* 69 */
+/***/ (function(module, exports, __webpack_require__) {
+
+exports = module.exports = __webpack_require__(0)(false);
+// imports
+
+
+// module
+exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", ""]);
+
+// exports
+
+
+/***/ }),
+/* 70 */
+/***/ (function(module, __webpack_exports__, __webpack_require__) {
+
+"use strict";
+Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+
+/* harmony default export */ __webpack_exports__["default"] = ({
+  name: 'EditQuestion',
+  props: ['data'],
+  data: function data() {
+    return {
+      form: {
+        title: null,
+        body: null
+      }
+    };
+  },
+
+  methods: {
+    cancel: function cancel() {
+      EventBus.$emit('cancelEditing');
+    },
+    update: function update() {
+      var _this = this;
+
+      axios.patch('/api/question/' + this.form.slug, this.form).then(function (res) {
+        return _this.cancel();
+      });
+    }
+  },
+  mounted: function mounted() {
+    this.form = this.data;
+  }
+});
+
+/***/ }),
+/* 71 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var render = function() {
+  var _vm = this
+  var _h = _vm.$createElement
+  var _c = _vm._self._c || _h
+  return _c(
+    "v-container",
+    { attrs: { fluid: "" } },
+    [
+      _c(
+        "v-card",
+        [
+          _c(
+            "v-form",
+            {
+              on: {
+                submit: function($event) {
+                  $event.preventDefault()
+                  return _vm.update($event)
+                }
+              }
+            },
+            [
+              _c("v-text-field", {
+                attrs: { label: "Title", type: "text", required: "" },
+                model: {
+                  value: _vm.form.title,
+                  callback: function($$v) {
+                    _vm.$set(_vm.form, "title", $$v)
+                  },
+                  expression: "form.title"
+                }
+              }),
+              _vm._v(" "),
+              _c("markdown-editor", {
+                attrs: { "preview-class": "markdown-body" },
+                model: {
+                  value: _vm.form.body,
+                  callback: function($$v) {
+                    _vm.$set(_vm.form, "body", $$v)
+                  },
+                  expression: "form.body"
+                }
+              }),
+              _vm._v(" "),
+              _c(
+                "v-card-actions",
+                [
+                  _c(
+                    "v-btn",
+                    { attrs: { icon: "", small: "", type: "submit" } },
+                    [
+                      _c("v-icon", { attrs: { color: "teal" } }, [
+                        _vm._v("save")
+                      ])
+                    ],
+                    1
+                  ),
+                  _vm._v(" "),
+                  _c(
+                    "v-btn",
+                    {
+                      attrs: { icon: "", small: "" },
+                      on: { click: _vm.cancel }
+                    },
+                    [_c("v-icon", [_vm._v("cancel")])],
+                    1
+                  )
+                ],
+                1
+              )
+            ],
+            1
+          )
+        ],
+        1
+      )
+    ],
+    1
+  )
+}
+var staticRenderFns = []
+render._withStripped = true
+module.exports = { render: render, staticRenderFns: staticRenderFns }
+if (false) {
+  module.hot.accept()
+  if (module.hot.data) {
+    require("vue-hot-reload-api")      .rerender("data-v-33056db5", module.exports)
+  }
+}
+
+/***/ }),
+/* 72 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var disposed = false
+function injectStyle (ssrContext) {
+  if (disposed) return
+  __webpack_require__(73)
+}
+var normalizeComponent = __webpack_require__(2)
+/* script */
+var __vue_script__ = __webpack_require__(75)
+/* template */
+var __vue_template__ = __webpack_require__(81)
+/* template functional */
+var __vue_template_functional__ = false
+/* styles */
+var __vue_styles__ = injectStyle
+/* scopeId */
+var __vue_scopeId__ = "data-v-bd63e688"
+/* moduleIdentifier (server only) */
+var __vue_module_identifier__ = null
+var Component = normalizeComponent(
+  __vue_script__,
+  __vue_template__,
+  __vue_template_functional__,
+  __vue_styles__,
+  __vue_scopeId__,
+  __vue_module_identifier__
+)
+Component.options.__file = "resources/assets/js/components/reply/Replies.vue"
+
+/* hot reload */
+if (false) {(function () {
+  var hotAPI = require("vue-hot-reload-api")
+  hotAPI.install(require("vue"), false)
+  if (!hotAPI.compatible) return
+  module.hot.accept()
+  if (!module.hot.data) {
+    hotAPI.createRecord("data-v-bd63e688", Component.options)
+  } else {
+    hotAPI.reload("data-v-bd63e688", Component.options)
+  }
+  module.hot.dispose(function (data) {
+    disposed = true
+  })
+})()}
+
+module.exports = Component.exports
+
+
+/***/ }),
+/* 73 */
+/***/ (function(module, exports, __webpack_require__) {
+
+// style-loader: Adds some css to the DOM by adding a <style> tag
+
+// load the styles
+var content = __webpack_require__(74);
+if(typeof content === 'string') content = [[module.i, content, '']];
+if(content.locals) module.exports = content.locals;
+// add the styles to the DOM
+var update = __webpack_require__(1)("49f0a248", content, false, {});
+// Hot Module Replacement
+if(false) {
+ // When the styles change, update the <style> tags
+ if(!content.locals) {
+   module.hot.accept("!!../../../../../node_modules/css-loader/index.js!../../../../../node_modules/vue-loader/lib/style-compiler/index.js?{\"vue\":true,\"id\":\"data-v-bd63e688\",\"scoped\":true,\"hasInlineConfig\":true}!../../../../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./Replies.vue", function() {
+     var newContent = require("!!../../../../../node_modules/css-loader/index.js!../../../../../node_modules/vue-loader/lib/style-compiler/index.js?{\"vue\":true,\"id\":\"data-v-bd63e688\",\"scoped\":true,\"hasInlineConfig\":true}!../../../../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./Replies.vue");
+     if(typeof newContent === 'string') newContent = [[module.id, newContent, '']];
+     update(newContent);
+   });
+ }
+ // When the module is disposed, remove the <style> tags
+ module.hot.dispose(function() { update(); });
+}
+
+/***/ }),
+/* 74 */
+/***/ (function(module, exports, __webpack_require__) {
+
+exports = module.exports = __webpack_require__(0)(false);
+// imports
+
+
+// module
+exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", ""]);
+
+// exports
+
+
+/***/ }),
+/* 75 */
+/***/ (function(module, __webpack_exports__, __webpack_require__) {
+
+"use strict";
+Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_0__Reply__ = __webpack_require__(76);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_0__Reply___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_0__Reply__);
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+
+
+/* harmony default export */ __webpack_exports__["default"] = ({
+  name: 'Replies',
+  props: ['question'],
+  data: function data() {
+    return {
+      content: this.question.replies
+    };
+  },
+
+  components: {
+    Reply: __WEBPACK_IMPORTED_MODULE_0__Reply___default.a
+  },
+  created: function created() {
+    this.listen();
+  },
+
+  methods: {
+    listen: function listen() {
+      var _this = this;
+
+      EventBus.$on('newReply', function (reply) {
+        _this.content.unshift(reply);
+      });
+
+      EventBus.$on('deleteReply', function (index) {
+        axios.delete('/api/question/' + _this.question.slug + '/reply/' + _this.content[index].id).then(function (res) {
+          _this.content.splice(index, 1);
+        });
+      });
+    }
+  }
+});
+
+/***/ }),
+/* 76 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var disposed = false
+function injectStyle (ssrContext) {
+  if (disposed) return
+  __webpack_require__(77)
+}
+var normalizeComponent = __webpack_require__(2)
+/* script */
+var __vue_script__ = __webpack_require__(79)
+/* template */
+var __vue_template__ = __webpack_require__(80)
+/* template functional */
+var __vue_template_functional__ = false
+/* styles */
+var __vue_styles__ = injectStyle
+/* scopeId */
+var __vue_scopeId__ = "data-v-1798249e"
+/* moduleIdentifier (server only) */
+var __vue_module_identifier__ = null
+var Component = normalizeComponent(
+  __vue_script__,
+  __vue_template__,
+  __vue_template_functional__,
+  __vue_styles__,
+  __vue_scopeId__,
+  __vue_module_identifier__
+)
+Component.options.__file = "resources/assets/js/components/reply/Reply.vue"
+
+/* hot reload */
+if (false) {(function () {
+  var hotAPI = require("vue-hot-reload-api")
+  hotAPI.install(require("vue"), false)
+  if (!hotAPI.compatible) return
+  module.hot.accept()
+  if (!module.hot.data) {
+    hotAPI.createRecord("data-v-1798249e", Component.options)
+  } else {
+    hotAPI.reload("data-v-1798249e", Component.options)
+  }
+  module.hot.dispose(function (data) {
+    disposed = true
+  })
+})()}
+
+module.exports = Component.exports
+
+
+/***/ }),
+/* 77 */
+/***/ (function(module, exports, __webpack_require__) {
+
+// style-loader: Adds some css to the DOM by adding a <style> tag
+
+// load the styles
+var content = __webpack_require__(78);
+if(typeof content === 'string') content = [[module.i, content, '']];
+if(content.locals) module.exports = content.locals;
+// add the styles to the DOM
+var update = __webpack_require__(1)("3ccc1182", content, false, {});
+// Hot Module Replacement
+if(false) {
+ // When the styles change, update the <style> tags
+ if(!content.locals) {
+   module.hot.accept("!!../../../../../node_modules/css-loader/index.js!../../../../../node_modules/vue-loader/lib/style-compiler/index.js?{\"vue\":true,\"id\":\"data-v-1798249e\",\"scoped\":true,\"hasInlineConfig\":true}!../../../../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./Reply.vue", function() {
+     var newContent = require("!!../../../../../node_modules/css-loader/index.js!../../../../../node_modules/vue-loader/lib/style-compiler/index.js?{\"vue\":true,\"id\":\"data-v-1798249e\",\"scoped\":true,\"hasInlineConfig\":true}!../../../../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./Reply.vue");
+     if(typeof newContent === 'string') newContent = [[module.id, newContent, '']];
+     update(newContent);
+   });
+ }
+ // When the module is disposed, remove the <style> tags
+ module.hot.dispose(function() { update(); });
+}
+
+/***/ }),
+/* 78 */
+/***/ (function(module, exports, __webpack_require__) {
+
+exports = module.exports = __webpack_require__(0)(false);
+// imports
+
+
+// module
+exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", ""]);
+
+// exports
+
+
+/***/ }),
+/* 79 */
+/***/ (function(module, __webpack_exports__, __webpack_require__) {
+
+"use strict";
+Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_0__EditReply__ = __webpack_require__(161);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_0__EditReply___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_0__EditReply__);
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+
+
+/* harmony default export */ __webpack_exports__["default"] = ({
+  name: 'Reply',
+  props: ['data', 'index'],
+  components: {
+    EditReply: __WEBPACK_IMPORTED_MODULE_0__EditReply___default.a
+  },
+  data: function data() {
+    return {
+      editing: false
+    };
+  },
+  created: function created() {
+    this.listen();
+  },
+
+  computed: {
+    own: function own() {
+      return User.own(this.data.user_id);
+    },
+    reply: function reply() {
+      return md.parse(this.data.reply);
+    }
+  },
+  methods: {
+    destroy: function destroy() {
+      EventBus.$emit('deleteReply', this.index);
+    },
+    edit: function edit() {
+      this.editing = true;
+    },
+    listen: function listen() {
+      var _this = this;
+
+      EventBus.$on('cancelEditing', function () {
+        _this.editing = false;
+      });
+    }
+  }
+});
+
+/***/ }),
+/* 80 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var render = function() {
+  var _vm = this
+  var _h = _vm.$createElement
+  var _c = _vm._self._c || _h
+  return _c(
+    "div",
+    { staticClass: "mt-3" },
+    [
+      _c(
+        "v-card",
+        [
+          _c("v-card-title", [
+            _c("div", { staticClass: "headline" }, [
+              _vm._v(_vm._s(_vm.data.user))
+            ]),
+            _vm._v(" "),
+            _c("div", { staticClass: "ml-2" }, [
+              _vm._v("said " + _vm._s(_vm.data.created_at))
+            ])
+          ]),
+          _vm._v(" "),
+          _c("v-divider"),
+          _vm._v(" "),
+          _vm.editing
+            ? _c("edit-reply", { attrs: { reply: _vm.data } })
+            : _c("v-card-text", { domProps: { innerHTML: _vm._s(_vm.reply) } }),
+          _vm._v(" "),
+          !_vm.editing
+            ? _c(
+                "div",
+                [
+                  _vm.own
+                    ? _c(
+                        "v-card-actions",
+                        [
+                          _c(
+                            "v-btn",
+                            {
+                              attrs: { icon: "", small: "" },
+                              on: { click: _vm.edit }
+                            },
+                            [
+                              _c("v-icon", { attrs: { color: "orange" } }, [
+                                _vm._v("edit")
+                              ])
+                            ],
+                            1
+                          ),
+                          _vm._v(" "),
+                          _c(
+                            "v-btn",
+                            {
+                              attrs: { icon: "", small: "" },
+                              on: { click: _vm.destroy }
+                            },
+                            [
+                              _c("v-icon", { attrs: { color: "red" } }, [
+                                _vm._v("delete")
+                              ])
+                            ],
+                            1
+                          )
+                        ],
+                        1
+                      )
+                    : _vm._e()
+                ],
+                1
+              )
+            : _vm._e()
+        ],
+        1
+      )
+    ],
+    1
+  )
+}
+var staticRenderFns = []
+render._withStripped = true
+module.exports = { render: render, staticRenderFns: staticRenderFns }
+if (false) {
+  module.hot.accept()
+  if (module.hot.data) {
+    require("vue-hot-reload-api")      .rerender("data-v-1798249e", module.exports)
+  }
+}
+
+/***/ }),
+/* 81 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var render = function() {
+  var _vm = this
+  var _h = _vm.$createElement
+  var _c = _vm._self._c || _h
+  return _c(
+    "div",
+    _vm._l(_vm.content, function(reply, index) {
+      return _vm.content
+        ? _c("reply", { key: reply.id, attrs: { index: index, data: reply } })
+        : _vm._e()
+    })
+  )
+}
+var staticRenderFns = []
+render._withStripped = true
+module.exports = { render: render, staticRenderFns: staticRenderFns }
+if (false) {
+  module.hot.accept()
+  if (module.hot.data) {
+    require("vue-hot-reload-api")      .rerender("data-v-bd63e688", module.exports)
+  }
+}
+
+/***/ }),
+/* 82 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var disposed = false
+function injectStyle (ssrContext) {
+  if (disposed) return
+  __webpack_require__(83)
+}
+var normalizeComponent = __webpack_require__(2)
+/* script */
+var __vue_script__ = __webpack_require__(85)
+/* template */
+var __vue_template__ = __webpack_require__(86)
+/* template functional */
+var __vue_template_functional__ = false
+/* styles */
+var __vue_styles__ = injectStyle
+/* scopeId */
+var __vue_scopeId__ = "data-v-b1ac3db4"
+/* moduleIdentifier (server only) */
+var __vue_module_identifier__ = null
+var Component = normalizeComponent(
+  __vue_script__,
+  __vue_template__,
+  __vue_template_functional__,
+  __vue_styles__,
+  __vue_scopeId__,
+  __vue_module_identifier__
+)
+Component.options.__file = "resources/assets/js/components/reply/NewReply.vue"
+
+/* hot reload */
+if (false) {(function () {
+  var hotAPI = require("vue-hot-reload-api")
+  hotAPI.install(require("vue"), false)
+  if (!hotAPI.compatible) return
+  module.hot.accept()
+  if (!module.hot.data) {
+    hotAPI.createRecord("data-v-b1ac3db4", Component.options)
+  } else {
+    hotAPI.reload("data-v-b1ac3db4", Component.options)
+  }
+  module.hot.dispose(function (data) {
+    disposed = true
+  })
+})()}
+
+module.exports = Component.exports
+
+
+/***/ }),
+/* 83 */
+/***/ (function(module, exports, __webpack_require__) {
+
+// style-loader: Adds some css to the DOM by adding a <style> tag
+
+// load the styles
+var content = __webpack_require__(84);
+if(typeof content === 'string') content = [[module.i, content, '']];
+if(content.locals) module.exports = content.locals;
+// add the styles to the DOM
+var update = __webpack_require__(1)("fc200698", content, false, {});
+// Hot Module Replacement
+if(false) {
+ // When the styles change, update the <style> tags
+ if(!content.locals) {
+   module.hot.accept("!!../../../../../node_modules/css-loader/index.js!../../../../../node_modules/vue-loader/lib/style-compiler/index.js?{\"vue\":true,\"id\":\"data-v-b1ac3db4\",\"scoped\":true,\"hasInlineConfig\":true}!../../../../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./NewReply.vue", function() {
+     var newContent = require("!!../../../../../node_modules/css-loader/index.js!../../../../../node_modules/vue-loader/lib/style-compiler/index.js?{\"vue\":true,\"id\":\"data-v-b1ac3db4\",\"scoped\":true,\"hasInlineConfig\":true}!../../../../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./NewReply.vue");
+     if(typeof newContent === 'string') newContent = [[module.id, newContent, '']];
+     update(newContent);
+   });
+ }
+ // When the module is disposed, remove the <style> tags
+ module.hot.dispose(function() { update(); });
+}
+
+/***/ }),
+/* 84 */
+/***/ (function(module, exports, __webpack_require__) {
+
+exports = module.exports = __webpack_require__(0)(false);
+// imports
+
+
+// module
+exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", ""]);
+
+// exports
+
+
+/***/ }),
+/* 85 */
+/***/ (function(module, __webpack_exports__, __webpack_require__) {
+
+"use strict";
+Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
+//
+//
+//
+//
+//
+//
+//
+//
+//
+
+/* harmony default export */ __webpack_exports__["default"] = ({
+  name: 'NewReply',
+  props: ['questionSlug'],
+  data: function data() {
+    return {
+      body: null
+    };
+  },
+
+  methods: {
+    submit: function submit() {
+      var _this = this;
+
+      axios.post('/api/question/' + this.questionSlug + '/reply', { body: this.body }).then(function (res) {
+        _this.body = '';
+        EventBus.$emit('newReply', res.data.reply);
+        window.scrollTo(0, 0);
+      });
+    }
+  }
+});
+
+/***/ }),
+/* 86 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var render = function() {
+  var _vm = this
+  var _h = _vm.$createElement
+  var _c = _vm._self._c || _h
+  return _c(
+    "div",
+    { staticClass: "mt-4" },
+    [
+      _c("markdown-editor", {
+        attrs: { "preview-class": "markdown-body" },
+        model: {
+          value: _vm.body,
+          callback: function($$v) {
+            _vm.body = $$v
+          },
+          expression: "body"
+        }
+      }),
+      _vm._v(" "),
+      _c(
+        "v-btn",
+        { attrs: { color: "green", dark: "" }, on: { click: _vm.submit } },
+        [_vm._v("\n    Reply\n  ")]
+      )
+    ],
+    1
+  )
+}
+var staticRenderFns = []
+render._withStripped = true
+module.exports = { render: render, staticRenderFns: staticRenderFns }
+if (false) {
+  module.hot.accept()
+  if (module.hot.data) {
+    require("vue-hot-reload-api")      .rerender("data-v-b1ac3db4", module.exports)
+  }
+}
+
+/***/ }),
+/* 87 */
 /***/ (function(module, exports, __webpack_require__) {
 
 var render = function() {
@@ -62115,7 +63182,17 @@ var render = function() {
         [
           _vm.editing
             ? _c("edit-question", { attrs: { data: _vm.question } })
-            : _c("show-question", { attrs: { data: _vm.question } })
+            : _c("show-question", { attrs: { data: _vm.question } }),
+          _vm._v(" "),
+          _c(
+            "v-container",
+            [
+              _c("replies", { attrs: { question: _vm.question } }),
+              _vm._v(" "),
+              _c("new-reply", { attrs: { questionSlug: _vm.question.slug } })
+            ],
+            1
+          )
         ],
         1
       )
@@ -62132,19 +63209,19 @@ if (false) {
 }
 
 /***/ }),
-/* 63 */
+/* 88 */
 /***/ (function(module, exports, __webpack_require__) {
 
 var disposed = false
 function injectStyle (ssrContext) {
   if (disposed) return
-  __webpack_require__(64)
+  __webpack_require__(89)
 }
-var normalizeComponent = __webpack_require__(3)
+var normalizeComponent = __webpack_require__(2)
 /* script */
-var __vue_script__ = __webpack_require__(66)
+var __vue_script__ = __webpack_require__(91)
 /* template */
-var __vue_template__ = __webpack_require__(67)
+var __vue_template__ = __webpack_require__(92)
 /* template functional */
 var __vue_template_functional__ = false
 /* styles */
@@ -62183,17 +63260,17 @@ module.exports = Component.exports
 
 
 /***/ }),
-/* 64 */
+/* 89 */
 /***/ (function(module, exports, __webpack_require__) {
 
 // style-loader: Adds some css to the DOM by adding a <style> tag
 
 // load the styles
-var content = __webpack_require__(65);
+var content = __webpack_require__(90);
 if(typeof content === 'string') content = [[module.i, content, '']];
 if(content.locals) module.exports = content.locals;
 // add the styles to the DOM
-var update = __webpack_require__(2)("bd0febf2", content, false, {});
+var update = __webpack_require__(1)("bd0febf2", content, false, {});
 // Hot Module Replacement
 if(false) {
  // When the styles change, update the <style> tags
@@ -62209,10 +63286,10 @@ if(false) {
 }
 
 /***/ }),
-/* 65 */
+/* 90 */
 /***/ (function(module, exports, __webpack_require__) {
 
-exports = module.exports = __webpack_require__(1)(false);
+exports = module.exports = __webpack_require__(0)(false);
 // imports
 
 
@@ -62223,7 +63300,7 @@ exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\
 
 
 /***/ }),
-/* 66 */
+/* 91 */
 /***/ (function(module, __webpack_exports__, __webpack_require__) {
 
 "use strict";
@@ -62295,7 +63372,7 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
 });
 
 /***/ }),
-/* 67 */
+/* 92 */
 /***/ (function(module, exports, __webpack_require__) {
 
 var render = function() {
@@ -62375,12 +63452,370 @@ if (false) {
 }
 
 /***/ }),
-/* 68 */
+/* 93 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var disposed = false
+function injectStyle (ssrContext) {
+  if (disposed) return
+  __webpack_require__(94)
+}
+var normalizeComponent = __webpack_require__(2)
+/* script */
+var __vue_script__ = __webpack_require__(96)
+/* template */
+var __vue_template__ = __webpack_require__(97)
+/* template functional */
+var __vue_template_functional__ = false
+/* styles */
+var __vue_styles__ = injectStyle
+/* scopeId */
+var __vue_scopeId__ = "data-v-64fca024"
+/* moduleIdentifier (server only) */
+var __vue_module_identifier__ = null
+var Component = normalizeComponent(
+  __vue_script__,
+  __vue_template__,
+  __vue_template_functional__,
+  __vue_styles__,
+  __vue_scopeId__,
+  __vue_module_identifier__
+)
+Component.options.__file = "resources/assets/js/components/category/CreateCategory.vue"
+
+/* hot reload */
+if (false) {(function () {
+  var hotAPI = require("vue-hot-reload-api")
+  hotAPI.install(require("vue"), false)
+  if (!hotAPI.compatible) return
+  module.hot.accept()
+  if (!module.hot.data) {
+    hotAPI.createRecord("data-v-64fca024", Component.options)
+  } else {
+    hotAPI.reload("data-v-64fca024", Component.options)
+  }
+  module.hot.dispose(function (data) {
+    disposed = true
+  })
+})()}
+
+module.exports = Component.exports
+
+
+/***/ }),
+/* 94 */
+/***/ (function(module, exports, __webpack_require__) {
+
+// style-loader: Adds some css to the DOM by adding a <style> tag
+
+// load the styles
+var content = __webpack_require__(95);
+if(typeof content === 'string') content = [[module.i, content, '']];
+if(content.locals) module.exports = content.locals;
+// add the styles to the DOM
+var update = __webpack_require__(1)("692b3864", content, false, {});
+// Hot Module Replacement
+if(false) {
+ // When the styles change, update the <style> tags
+ if(!content.locals) {
+   module.hot.accept("!!../../../../../node_modules/css-loader/index.js!../../../../../node_modules/vue-loader/lib/style-compiler/index.js?{\"vue\":true,\"id\":\"data-v-64fca024\",\"scoped\":true,\"hasInlineConfig\":true}!../../../../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./CreateCategory.vue", function() {
+     var newContent = require("!!../../../../../node_modules/css-loader/index.js!../../../../../node_modules/vue-loader/lib/style-compiler/index.js?{\"vue\":true,\"id\":\"data-v-64fca024\",\"scoped\":true,\"hasInlineConfig\":true}!../../../../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./CreateCategory.vue");
+     if(typeof newContent === 'string') newContent = [[module.id, newContent, '']];
+     update(newContent);
+   });
+ }
+ // When the module is disposed, remove the <style> tags
+ module.hot.dispose(function() { update(); });
+}
+
+/***/ }),
+/* 95 */
+/***/ (function(module, exports, __webpack_require__) {
+
+exports = module.exports = __webpack_require__(0)(false);
+// imports
+
+
+// module
+exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", ""]);
+
+// exports
+
+
+/***/ }),
+/* 96 */
 /***/ (function(module, __webpack_exports__, __webpack_require__) {
 
 "use strict";
-/* harmony import */ var __WEBPACK_IMPORTED_MODULE_0__Token__ = __webpack_require__(69);
-/* harmony import */ var __WEBPACK_IMPORTED_MODULE_1__AppStorage__ = __webpack_require__(70);
+Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+
+/* harmony default export */ __webpack_exports__["default"] = ({
+  name: 'CreateCategory',
+  data: function data() {
+    return {
+      form: {
+        name: null
+      },
+      categories: {},
+      editSlug: null
+    };
+  },
+
+  methods: {
+    submit: function submit() {
+      this.editSlug ? this.update() : this.create();
+    },
+    update: function update() {
+      var _this = this;
+
+      axios.patch('/api/category/' + this.editSlug, this.form).then(function (res) {
+        _this.categories.unshift(res.data);
+        _this.form.name = null;
+      });
+    },
+    create: function create() {
+      var _this2 = this;
+
+      axios.post('/api/category', this.form).then(function (res) {
+        _this2.categories.unshift(res.data);
+        _this2.form.name = null;
+      });
+    },
+    edit: function edit(index) {
+      this.form.name = this.categories[index].name;
+      this.editSlug = this.categories[index].slug;
+      this.categories.splice(index, 1);
+    },
+    destroy: function destroy(slug, index) {
+      var _this3 = this;
+
+      axios.delete('/api/category/' + slug).then(function (res) {
+        return _this3.categories.splice(index, 1);
+      });
+    }
+  },
+  created: function created() {
+    var _this4 = this;
+
+    if (!User.admin()) {
+      this.$router.push('/forum');
+    }
+    axios.get('api/category').then(function (res) {
+      return _this4.categories = res.data.data;
+    });
+  }
+});
+
+/***/ }),
+/* 97 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var render = function() {
+  var _vm = this
+  var _h = _vm.$createElement
+  var _c = _vm._self._c || _h
+  return _c(
+    "v-container",
+    [
+      _c(
+        "v-form",
+        {
+          on: {
+            submit: function($event) {
+              $event.preventDefault()
+              return _vm.submit($event)
+            }
+          }
+        },
+        [
+          _c("v-text-field", {
+            attrs: { label: "Category", type: "text", required: "" },
+            model: {
+              value: _vm.form.name,
+              callback: function($$v) {
+                _vm.$set(_vm.form, "name", $$v)
+              },
+              expression: "form.name"
+            }
+          }),
+          _vm._v(" "),
+          _vm.editSlug
+            ? _c("v-btn", { attrs: { type: "submit", color: "pink" } }, [
+                _vm._v("Update")
+              ])
+            : _c("v-btn", { attrs: { type: "submit", color: "teal" } }, [
+                _vm._v("Create")
+              ])
+        ],
+        1
+      ),
+      _vm._v(" "),
+      _c(
+        "v-card",
+        [
+          _c(
+            "v-toolbar",
+            { attrs: { color: "indigo", dense: "", dark: "" } },
+            [_c("v-toolbar-title", [_vm._v("Categories")])],
+            1
+          ),
+          _vm._v(" "),
+          _c(
+            "v-list",
+            _vm._l(_vm.categories, function(category, index) {
+              return _c(
+                "div",
+                { attrs: { index: category.id } },
+                [
+                  _c(
+                    "v-list-tile",
+                    [
+                      _c(
+                        "v-list-tile-action",
+                        [
+                          _c(
+                            "v-btn",
+                            {
+                              attrs: { icon: "", small: "" },
+                              on: {
+                                click: function($event) {
+                                  _vm.edit(index)
+                                }
+                              }
+                            },
+                            [
+                              _c("v-icon", { attrs: { color: "orange" } }, [
+                                _vm._v("edit")
+                              ])
+                            ],
+                            1
+                          )
+                        ],
+                        1
+                      ),
+                      _vm._v(" "),
+                      _c(
+                        "v-list-tile-content",
+                        [
+                          _c("v-list-tile-title", [
+                            _vm._v(
+                              "\n              " +
+                                _vm._s(category.name) +
+                                "\n            "
+                            )
+                          ])
+                        ],
+                        1
+                      ),
+                      _vm._v(" "),
+                      _c(
+                        "v-list-tile-action",
+                        [
+                          _c(
+                            "v-btn",
+                            {
+                              attrs: { icon: "", small: "" },
+                              on: {
+                                click: function($event) {
+                                  _vm.destroy(category.slug, index)
+                                }
+                              }
+                            },
+                            [
+                              _c("v-icon", { attrs: { color: "red" } }, [
+                                _vm._v("delete")
+                              ])
+                            ],
+                            1
+                          )
+                        ],
+                        1
+                      )
+                    ],
+                    1
+                  ),
+                  _vm._v(" "),
+                  _c("v-divider")
+                ],
+                1
+              )
+            })
+          )
+        ],
+        1
+      )
+    ],
+    1
+  )
+}
+var staticRenderFns = []
+render._withStripped = true
+module.exports = { render: render, staticRenderFns: staticRenderFns }
+if (false) {
+  module.hot.accept()
+  if (module.hot.data) {
+    require("vue-hot-reload-api")      .rerender("data-v-64fca024", module.exports)
+  }
+}
+
+/***/ }),
+/* 98 */
+/***/ (function(module, __webpack_exports__, __webpack_require__) {
+
+"use strict";
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_0__Token__ = __webpack_require__(99);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_1__AppStorage__ = __webpack_require__(100);
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -62454,6 +63889,11 @@ var User = function () {
     value: function own(id) {
       return this.id() === id;
     }
+  }, {
+    key: 'admin',
+    value: function admin() {
+      return this.id() === 20;
+    }
   }]);
 
   return User;
@@ -62462,7 +63902,7 @@ var User = function () {
 /* harmony default export */ __webpack_exports__["a"] = (User = new User());
 
 /***/ }),
-/* 69 */
+/* 99 */
 /***/ (function(module, __webpack_exports__, __webpack_require__) {
 
 "use strict";
@@ -62503,7 +63943,7 @@ var Token = function () {
 /* harmony default export */ __webpack_exports__["a"] = (Token = new Token());
 
 /***/ }),
-/* 70 */
+/* 100 */
 /***/ (function(module, __webpack_exports__, __webpack_require__) {
 
 "use strict";
@@ -62556,30 +63996,30 @@ var AppStorage = function () {
 /* harmony default export */ __webpack_exports__["a"] = (AppStorage = new AppStorage());
 
 /***/ }),
-/* 71 */
+/* 101 */
 /***/ (function(module, exports, __webpack_require__) {
 
-!function(e,t){ true?module.exports=t(__webpack_require__(72),__webpack_require__(13)):"function"==typeof define&&define.amd?define("VueSimpleMDE",["simplemde","marked"],t):"object"==typeof exports?exports.VueSimpleMDE=t(require("simplemde"),require("marked")):e.VueSimpleMDE=t(e.SimpleMDE,e.marked)}(this,function(e,t){return function(e){function t(r){if(n[r])return n[r].exports;var i=n[r]={i:r,l:!1,exports:{}};return e[r].call(i.exports,i,i.exports,t),i.l=!0,i.exports}var n={};return t.m=e,t.c=n,t.d=function(e,n,r){t.o(e,n)||Object.defineProperty(e,n,{configurable:!1,enumerable:!0,get:r})},t.n=function(e){var n=e&&e.__esModule?function(){return e.default}:function(){return e};return t.d(n,"a",n),n},t.o=function(e,t){return Object.prototype.hasOwnProperty.call(e,t)},t.p="",t(t.s=0)}([function(e,t,n){"use strict";Object.defineProperty(t,"__esModule",{value:!0});var r=n(1);n.d(t,"markdownEditor",function(){return r.a}),t.default={markdownEditor:r.a,install:function(e){e.component("markdown-editor",r.a)}}},function(e,t,n){"use strict";function r(e){n(2)}var i=n(8),o=n(11),a=n(7),s=r,u=a(i.a,o.a,!1,s,null,null);t.a=u.exports},function(e,t,n){var r=n(3);"string"==typeof r&&(r=[[e.i,r,""]]),r.locals&&(e.exports=r.locals);n(5)("c9294450",r,!0)},function(e,t,n){t=e.exports=n(4)(void 0),t.push([e.i,".markdown-editor .markdown-body{padding:.5em}.markdown-editor .editor-preview-active,.markdown-editor .editor-preview-active-side{display:block}",""])},function(e,t){function n(e,t){var n=e[1]||"",i=e[3];if(!i)return n;if(t&&"function"==typeof btoa){var o=r(i);return[n].concat(i.sources.map(function(e){return"/*# sourceURL="+i.sourceRoot+e+" */"})).concat([o]).join("\n")}return[n].join("\n")}function r(e){return"/*# sourceMappingURL=data:application/json;charset=utf-8;base64,"+btoa(unescape(encodeURIComponent(JSON.stringify(e))))+" */"}e.exports=function(e){var t=[];return t.toString=function(){return this.map(function(t){var r=n(t,e);return t[2]?"@media "+t[2]+"{"+r+"}":r}).join("")},t.i=function(e,n){"string"==typeof e&&(e=[[null,e,""]]);for(var r={},i=0;i<this.length;i++){var o=this[i][0];"number"==typeof o&&(r[o]=!0)}for(i=0;i<e.length;i++){var a=e[i];"number"==typeof a[0]&&r[a[0]]||(n&&!a[2]?a[2]=n:n&&(a[2]="("+a[2]+") and ("+n+")"),t.push(a))}},t}},function(e,t,n){function r(e){for(var t=0;t<e.length;t++){var n=e[t],r=c[n.id];if(r){r.refs++;for(var i=0;i<r.parts.length;i++)r.parts[i](n.parts[i]);for(;i<n.parts.length;i++)r.parts.push(o(n.parts[i]));r.parts.length>n.parts.length&&(r.parts.length=n.parts.length)}else{for(var a=[],i=0;i<n.parts.length;i++)a.push(o(n.parts[i]));c[n.id]={id:n.id,refs:1,parts:a}}}}function i(){var e=document.createElement("style");return e.type="text/css",l.appendChild(e),e}function o(e){var t,n,r=document.querySelector('style[data-vue-ssr-id~="'+e.id+'"]');if(r){if(m)return v;r.parentNode.removeChild(r)}if(h){var o=p++;r=f||(f=i()),t=a.bind(null,r,o,!1),n=a.bind(null,r,o,!0)}else r=i(),t=s.bind(null,r),n=function(){r.parentNode.removeChild(r)};return t(e),function(r){if(r){if(r.css===e.css&&r.media===e.media&&r.sourceMap===e.sourceMap)return;t(e=r)}else n()}}function a(e,t,n,r){var i=n?"":r.css;if(e.styleSheet)e.styleSheet.cssText=g(t,i);else{var o=document.createTextNode(i),a=e.childNodes;a[t]&&e.removeChild(a[t]),a.length?e.insertBefore(o,a[t]):e.appendChild(o)}}function s(e,t){var n=t.css,r=t.media,i=t.sourceMap;if(r&&e.setAttribute("media",r),i&&(n+="\n/*# sourceURL="+i.sources[0]+" */",n+="\n/*# sourceMappingURL=data:application/json;base64,"+btoa(unescape(encodeURIComponent(JSON.stringify(i))))+" */"),e.styleSheet)e.styleSheet.cssText=n;else{for(;e.firstChild;)e.removeChild(e.firstChild);e.appendChild(document.createTextNode(n))}}var u="undefined"!=typeof document;if("undefined"!=typeof DEBUG&&DEBUG&&!u)throw new Error("vue-style-loader cannot be used in a non-browser environment. Use { target: 'node' } in your Webpack config to indicate a server-rendering environment.");var d=n(6),c={},l=u&&(document.head||document.getElementsByTagName("head")[0]),f=null,p=0,m=!1,v=function(){},h="undefined"!=typeof navigator&&/msie [6-9]\b/.test(navigator.userAgent.toLowerCase());e.exports=function(e,t,n){m=n;var i=d(e,t);return r(i),function(t){for(var n=[],o=0;o<i.length;o++){var a=i[o],s=c[a.id];s.refs--,n.push(s)}t?(i=d(e,t),r(i)):i=[];for(var o=0;o<n.length;o++){var s=n[o];if(0===s.refs){for(var u=0;u<s.parts.length;u++)s.parts[u]();delete c[s.id]}}}};var g=function(){var e=[];return function(t,n){return e[t]=n,e.filter(Boolean).join("\n")}}()},function(e,t){e.exports=function(e,t){for(var n=[],r={},i=0;i<t.length;i++){var o=t[i],a=o[0],s=o[1],u=o[2],d=o[3],c={id:e+":"+i,css:s,media:u,sourceMap:d};r[a]?r[a].parts.push(c):n.push(r[a]={id:a,parts:[c]})}return n}},function(e,t){e.exports=function(e,t,n,r,i,o){var a,s=e=e||{},u=typeof e.default;"object"!==u&&"function"!==u||(a=e,s=e.default);var d="function"==typeof s?s.options:s;t&&(d.render=t.render,d.staticRenderFns=t.staticRenderFns,d._compiled=!0),n&&(d.functional=!0),i&&(d._scopeId=i);var c;if(o?(c=function(e){e=e||this.$vnode&&this.$vnode.ssrContext||this.parent&&this.parent.$vnode&&this.parent.$vnode.ssrContext,e||"undefined"==typeof __VUE_SSR_CONTEXT__||(e=__VUE_SSR_CONTEXT__),r&&r.call(this,e),e&&e._registeredComponents&&e._registeredComponents.add(o)},d._ssrRegister=c):r&&(c=r),c){var l=d.functional,f=l?d.render:d.beforeCreate;l?(d._injectStyles=c,d.render=function(e,t){return c.call(t),f(e,t)}):d.beforeCreate=f?[].concat(f,c):[c]}return{esModule:a,exports:s,options:d}}},function(e,t,n){"use strict";var r=n(9),i=n.n(r),o=n(10),a=n.n(o);t.a={name:"markdown-editor",props:{value:String,previewClass:String,autoinit:{type:Boolean,default:function(){return!0}},highlight:{type:Boolean,default:function(){return!1}},sanitize:{type:Boolean,default:function(){return!1}},configs:{type:Object,default:function(){return{}}}},mounted:function(){this.autoinit&&this.initialize()},activated:function(){var e=this.simplemde;if(e){(e.isSideBySideActive()||e.isPreviewActive())&&e.toggleFullScreen()}},methods:{initialize:function(){var e=Object.assign({element:this.$el.firstElementChild,initialValue:this.value,renderingConfig:{}},this.configs);e.initialValue&&this.$emit("input",e.initialValue),this.highlight&&(e.renderingConfig.codeSyntaxHighlighting=!0),a.a.setOptions({sanitize:this.sanitize}),this.simplemde=new i.a(e);var t=this.previewClass||"";this.addPreviewClass(t),this.bindingEvents()},bindingEvents:function(){var e=this;this.simplemde.codemirror.on("change",function(){e.$emit("input",e.simplemde.value())})},addPreviewClass:function(e){var t=this.simplemde.codemirror.getWrapperElement(),n=document.createElement("div");t.nextSibling.className+=" "+e,n.className="editor-preview "+e,t.appendChild(n)}},destroyed:function(){this.simplemde=null},watch:{value:function(e){e!==this.simplemde.value()&&this.simplemde.value(e)}}}},function(t,n){t.exports=e},function(e,n){e.exports=t},function(e,t,n){"use strict";var r=function(){var e=this,t=e.$createElement;e._self._c;return e._m(0)},i=[function(){var e=this,t=e.$createElement,n=e._self._c||t;return n("div",{staticClass:"markdown-editor"},[n("textarea")])}],o={render:r,staticRenderFns:i};t.a=o}])});
+!function(e,t){ true?module.exports=t(__webpack_require__(102),__webpack_require__(7)):"function"==typeof define&&define.amd?define("VueSimpleMDE",["simplemde","marked"],t):"object"==typeof exports?exports.VueSimpleMDE=t(require("simplemde"),require("marked")):e.VueSimpleMDE=t(e.SimpleMDE,e.marked)}(this,function(e,t){return function(e){function t(r){if(n[r])return n[r].exports;var i=n[r]={i:r,l:!1,exports:{}};return e[r].call(i.exports,i,i.exports,t),i.l=!0,i.exports}var n={};return t.m=e,t.c=n,t.d=function(e,n,r){t.o(e,n)||Object.defineProperty(e,n,{configurable:!1,enumerable:!0,get:r})},t.n=function(e){var n=e&&e.__esModule?function(){return e.default}:function(){return e};return t.d(n,"a",n),n},t.o=function(e,t){return Object.prototype.hasOwnProperty.call(e,t)},t.p="",t(t.s=0)}([function(e,t,n){"use strict";Object.defineProperty(t,"__esModule",{value:!0});var r=n(1);n.d(t,"markdownEditor",function(){return r.a}),t.default={markdownEditor:r.a,install:function(e){e.component("markdown-editor",r.a)}}},function(e,t,n){"use strict";function r(e){n(2)}var i=n(8),o=n(11),a=n(7),s=r,u=a(i.a,o.a,!1,s,null,null);t.a=u.exports},function(e,t,n){var r=n(3);"string"==typeof r&&(r=[[e.i,r,""]]),r.locals&&(e.exports=r.locals);n(5)("c9294450",r,!0)},function(e,t,n){t=e.exports=n(4)(void 0),t.push([e.i,".markdown-editor .markdown-body{padding:.5em}.markdown-editor .editor-preview-active,.markdown-editor .editor-preview-active-side{display:block}",""])},function(e,t){function n(e,t){var n=e[1]||"",i=e[3];if(!i)return n;if(t&&"function"==typeof btoa){var o=r(i);return[n].concat(i.sources.map(function(e){return"/*# sourceURL="+i.sourceRoot+e+" */"})).concat([o]).join("\n")}return[n].join("\n")}function r(e){return"/*# sourceMappingURL=data:application/json;charset=utf-8;base64,"+btoa(unescape(encodeURIComponent(JSON.stringify(e))))+" */"}e.exports=function(e){var t=[];return t.toString=function(){return this.map(function(t){var r=n(t,e);return t[2]?"@media "+t[2]+"{"+r+"}":r}).join("")},t.i=function(e,n){"string"==typeof e&&(e=[[null,e,""]]);for(var r={},i=0;i<this.length;i++){var o=this[i][0];"number"==typeof o&&(r[o]=!0)}for(i=0;i<e.length;i++){var a=e[i];"number"==typeof a[0]&&r[a[0]]||(n&&!a[2]?a[2]=n:n&&(a[2]="("+a[2]+") and ("+n+")"),t.push(a))}},t}},function(e,t,n){function r(e){for(var t=0;t<e.length;t++){var n=e[t],r=c[n.id];if(r){r.refs++;for(var i=0;i<r.parts.length;i++)r.parts[i](n.parts[i]);for(;i<n.parts.length;i++)r.parts.push(o(n.parts[i]));r.parts.length>n.parts.length&&(r.parts.length=n.parts.length)}else{for(var a=[],i=0;i<n.parts.length;i++)a.push(o(n.parts[i]));c[n.id]={id:n.id,refs:1,parts:a}}}}function i(){var e=document.createElement("style");return e.type="text/css",l.appendChild(e),e}function o(e){var t,n,r=document.querySelector('style[data-vue-ssr-id~="'+e.id+'"]');if(r){if(m)return v;r.parentNode.removeChild(r)}if(h){var o=p++;r=f||(f=i()),t=a.bind(null,r,o,!1),n=a.bind(null,r,o,!0)}else r=i(),t=s.bind(null,r),n=function(){r.parentNode.removeChild(r)};return t(e),function(r){if(r){if(r.css===e.css&&r.media===e.media&&r.sourceMap===e.sourceMap)return;t(e=r)}else n()}}function a(e,t,n,r){var i=n?"":r.css;if(e.styleSheet)e.styleSheet.cssText=g(t,i);else{var o=document.createTextNode(i),a=e.childNodes;a[t]&&e.removeChild(a[t]),a.length?e.insertBefore(o,a[t]):e.appendChild(o)}}function s(e,t){var n=t.css,r=t.media,i=t.sourceMap;if(r&&e.setAttribute("media",r),i&&(n+="\n/*# sourceURL="+i.sources[0]+" */",n+="\n/*# sourceMappingURL=data:application/json;base64,"+btoa(unescape(encodeURIComponent(JSON.stringify(i))))+" */"),e.styleSheet)e.styleSheet.cssText=n;else{for(;e.firstChild;)e.removeChild(e.firstChild);e.appendChild(document.createTextNode(n))}}var u="undefined"!=typeof document;if("undefined"!=typeof DEBUG&&DEBUG&&!u)throw new Error("vue-style-loader cannot be used in a non-browser environment. Use { target: 'node' } in your Webpack config to indicate a server-rendering environment.");var d=n(6),c={},l=u&&(document.head||document.getElementsByTagName("head")[0]),f=null,p=0,m=!1,v=function(){},h="undefined"!=typeof navigator&&/msie [6-9]\b/.test(navigator.userAgent.toLowerCase());e.exports=function(e,t,n){m=n;var i=d(e,t);return r(i),function(t){for(var n=[],o=0;o<i.length;o++){var a=i[o],s=c[a.id];s.refs--,n.push(s)}t?(i=d(e,t),r(i)):i=[];for(var o=0;o<n.length;o++){var s=n[o];if(0===s.refs){for(var u=0;u<s.parts.length;u++)s.parts[u]();delete c[s.id]}}}};var g=function(){var e=[];return function(t,n){return e[t]=n,e.filter(Boolean).join("\n")}}()},function(e,t){e.exports=function(e,t){for(var n=[],r={},i=0;i<t.length;i++){var o=t[i],a=o[0],s=o[1],u=o[2],d=o[3],c={id:e+":"+i,css:s,media:u,sourceMap:d};r[a]?r[a].parts.push(c):n.push(r[a]={id:a,parts:[c]})}return n}},function(e,t){e.exports=function(e,t,n,r,i,o){var a,s=e=e||{},u=typeof e.default;"object"!==u&&"function"!==u||(a=e,s=e.default);var d="function"==typeof s?s.options:s;t&&(d.render=t.render,d.staticRenderFns=t.staticRenderFns,d._compiled=!0),n&&(d.functional=!0),i&&(d._scopeId=i);var c;if(o?(c=function(e){e=e||this.$vnode&&this.$vnode.ssrContext||this.parent&&this.parent.$vnode&&this.parent.$vnode.ssrContext,e||"undefined"==typeof __VUE_SSR_CONTEXT__||(e=__VUE_SSR_CONTEXT__),r&&r.call(this,e),e&&e._registeredComponents&&e._registeredComponents.add(o)},d._ssrRegister=c):r&&(c=r),c){var l=d.functional,f=l?d.render:d.beforeCreate;l?(d._injectStyles=c,d.render=function(e,t){return c.call(t),f(e,t)}):d.beforeCreate=f?[].concat(f,c):[c]}return{esModule:a,exports:s,options:d}}},function(e,t,n){"use strict";var r=n(9),i=n.n(r),o=n(10),a=n.n(o);t.a={name:"markdown-editor",props:{value:String,previewClass:String,autoinit:{type:Boolean,default:function(){return!0}},highlight:{type:Boolean,default:function(){return!1}},sanitize:{type:Boolean,default:function(){return!1}},configs:{type:Object,default:function(){return{}}}},mounted:function(){this.autoinit&&this.initialize()},activated:function(){var e=this.simplemde;if(e){(e.isSideBySideActive()||e.isPreviewActive())&&e.toggleFullScreen()}},methods:{initialize:function(){var e=Object.assign({element:this.$el.firstElementChild,initialValue:this.value,renderingConfig:{}},this.configs);e.initialValue&&this.$emit("input",e.initialValue),this.highlight&&(e.renderingConfig.codeSyntaxHighlighting=!0),a.a.setOptions({sanitize:this.sanitize}),this.simplemde=new i.a(e);var t=this.previewClass||"";this.addPreviewClass(t),this.bindingEvents()},bindingEvents:function(){var e=this;this.simplemde.codemirror.on("change",function(){e.$emit("input",e.simplemde.value())})},addPreviewClass:function(e){var t=this.simplemde.codemirror.getWrapperElement(),n=document.createElement("div");t.nextSibling.className+=" "+e,n.className="editor-preview "+e,t.appendChild(n)}},destroyed:function(){this.simplemde=null},watch:{value:function(e){e!==this.simplemde.value()&&this.simplemde.value(e)}}}},function(t,n){t.exports=e},function(e,n){e.exports=t},function(e,t,n){"use strict";var r=function(){var e=this,t=e.$createElement;e._self._c;return e._m(0)},i=[function(){var e=this,t=e.$createElement,n=e._self._c||t;return n("div",{staticClass:"markdown-editor"},[n("textarea")])}],o={render:r,staticRenderFns:i};t.a=o}])});
 
 /***/ }),
-/* 72 */
+/* 102 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
 /*global require,module*/
 
 var CodeMirror = __webpack_require__(4);
-__webpack_require__(73);
-__webpack_require__(74);
-__webpack_require__(75);
-__webpack_require__(10);
-__webpack_require__(12);
-__webpack_require__(77);
-__webpack_require__(78);
-__webpack_require__(79);
+__webpack_require__(103);
+__webpack_require__(104);
+__webpack_require__(105);
 __webpack_require__(11);
-var CodeMirrorSpellChecker = __webpack_require__(80);
-var marked = __webpack_require__(13);
+__webpack_require__(13);
+__webpack_require__(107);
+__webpack_require__(108);
+__webpack_require__(109);
+__webpack_require__(12);
+var CodeMirrorSpellChecker = __webpack_require__(110);
+var marked = __webpack_require__(7);
 
 
 // Some variables
@@ -64596,7 +66036,7 @@ SimpleMDE.prototype.toTextArea = function() {
 module.exports = SimpleMDE;
 
 /***/ }),
-/* 73 */
+/* 103 */
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
@@ -64691,7 +66131,7 @@ module.exports = SimpleMDE;
 
 
 /***/ }),
-/* 74 */
+/* 104 */
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
@@ -64741,7 +66181,7 @@ CodeMirror.commands.shiftTabAndUnindentMarkdownList = function (cm) {
 
 
 /***/ }),
-/* 75 */
+/* 105 */
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
@@ -64788,7 +66228,7 @@ CodeMirror.commands.shiftTabAndUnindentMarkdownList = function (cm) {
 
 
 /***/ }),
-/* 76 */
+/* 106 */
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
@@ -65011,7 +66451,7 @@ CodeMirror.commands.shiftTabAndUnindentMarkdownList = function (cm) {
 
 
 /***/ }),
-/* 77 */
+/* 107 */
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
@@ -65080,7 +66520,7 @@ CodeMirror.commands.shiftTabAndUnindentMarkdownList = function (cm) {
 
 
 /***/ }),
-/* 78 */
+/* 108 */
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
@@ -65205,7 +66645,7 @@ CodeMirror.commands.shiftTabAndUnindentMarkdownList = function (cm) {
 
 
 /***/ }),
-/* 79 */
+/* 109 */
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
@@ -65213,7 +66653,7 @@ CodeMirror.commands.shiftTabAndUnindentMarkdownList = function (cm) {
 
 (function(mod) {
   if (true) // CommonJS
-    mod(__webpack_require__(4), __webpack_require__(10), __webpack_require__(12));
+    mod(__webpack_require__(4), __webpack_require__(11), __webpack_require__(13));
   else if (typeof define == "function" && define.amd) // AMD
     define(["../../lib/codemirror", "../markdown/markdown", "../../addon/mode/overlay"], mod);
   else // Plain browser env
@@ -65340,7 +66780,7 @@ CodeMirror.defineMode("gfm", function(config, modeConfig) {
 
 
 /***/ }),
-/* 80 */
+/* 110 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -65349,7 +66789,7 @@ CodeMirror.defineMode("gfm", function(config, modeConfig) {
 
 
 // Requires
-var Typo = __webpack_require__(81);
+var Typo = __webpack_require__(111);
 
 
 // Create function
@@ -65465,7 +66905,7 @@ CodeMirrorSpellChecker.typo;
 module.exports = CodeMirrorSpellChecker;
 
 /***/ }),
-/* 81 */
+/* 111 */
 /***/ (function(module, exports, __webpack_require__) {
 
 /* WEBPACK VAR INJECTION */(function(__dirname, Buffer) {/* globals chrome: false */
@@ -65728,7 +67168,7 @@ Typo.prototype = {
 		}
 		else if (true) {
 			// Node.js
-			var fs = __webpack_require__(86);
+			var fs = __webpack_require__(116);
 			
 			try {
 				if (fs.existsSync(path)) {
@@ -66399,10 +67839,10 @@ Typo.prototype = {
 if (true) {
 	module.exports = Typo;
 }
-/* WEBPACK VAR INJECTION */}.call(exports, "/", __webpack_require__(82).Buffer))
+/* WEBPACK VAR INJECTION */}.call(exports, "/", __webpack_require__(112).Buffer))
 
 /***/ }),
-/* 82 */
+/* 112 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -66416,9 +67856,9 @@ if (true) {
 
 
 
-var base64 = __webpack_require__(83)
-var ieee754 = __webpack_require__(84)
-var isArray = __webpack_require__(85)
+var base64 = __webpack_require__(113)
+var ieee754 = __webpack_require__(114)
+var isArray = __webpack_require__(115)
 
 exports.Buffer = Buffer
 exports.SlowBuffer = SlowBuffer
@@ -68199,7 +69639,7 @@ function isnan (val) {
 /* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(5)))
 
 /***/ }),
-/* 83 */
+/* 113 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -68357,7 +69797,7 @@ function fromByteArray (uint8) {
 
 
 /***/ }),
-/* 84 */
+/* 114 */
 /***/ (function(module, exports) {
 
 exports.read = function (buffer, offset, isLE, mLen, nBytes) {
@@ -68447,7 +69887,7 @@ exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
 
 
 /***/ }),
-/* 85 */
+/* 115 */
 /***/ (function(module, exports) {
 
 var toString = {}.toString;
@@ -68458,17 +69898,17 @@ module.exports = Array.isArray || function (arr) {
 
 
 /***/ }),
-/* 86 */
+/* 116 */
 /***/ (function(module, exports) {
 
 /* (ignored) */
 
 /***/ }),
-/* 87 */
+/* 117 */
 /***/ (function(module, exports, __webpack_require__) {
 
 
-window._ = __webpack_require__(88);
+window._ = __webpack_require__(118);
 window.Popper = __webpack_require__(14).default;
 
 /**
@@ -68480,7 +69920,7 @@ window.Popper = __webpack_require__(14).default;
 try {
   window.$ = window.jQuery = __webpack_require__(15);
 
-  __webpack_require__(90);
+  __webpack_require__(120);
 } catch (e) {}
 
 /**
@@ -68489,7 +69929,7 @@ try {
  * CSRF token as a header based on the value of the "XSRF" token cookie.
  */
 
-window.axios = __webpack_require__(91);
+window.axios = __webpack_require__(121);
 
 window.axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
 var JwtToken = 'Bearer ' + localStorage.getItem('token');
@@ -68527,7 +69967,7 @@ if (token) {
 // });
 
 /***/ }),
-/* 88 */
+/* 118 */
 /***/ (function(module, exports, __webpack_require__) {
 
 /* WEBPACK VAR INJECTION */(function(global, module) {var __WEBPACK_AMD_DEFINE_RESULT__;/**
@@ -85637,10 +87077,10 @@ if (token) {
   }
 }.call(this));
 
-/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(5), __webpack_require__(89)(module)))
+/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(5), __webpack_require__(119)(module)))
 
 /***/ }),
-/* 89 */
+/* 119 */
 /***/ (function(module, exports) {
 
 module.exports = function(module) {
@@ -85668,7 +87108,7 @@ module.exports = function(module) {
 
 
 /***/ }),
-/* 90 */
+/* 120 */
 /***/ (function(module, exports, __webpack_require__) {
 
 /*!
@@ -89601,22 +91041,22 @@ module.exports = function(module) {
 
 
 /***/ }),
-/* 91 */
+/* 121 */
 /***/ (function(module, exports, __webpack_require__) {
 
-module.exports = __webpack_require__(92);
+module.exports = __webpack_require__(122);
 
 /***/ }),
-/* 92 */
+/* 122 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
 
 
-var utils = __webpack_require__(0);
+var utils = __webpack_require__(3);
 var bind = __webpack_require__(16);
-var Axios = __webpack_require__(94);
-var defaults = __webpack_require__(7);
+var Axios = __webpack_require__(124);
+var defaults = __webpack_require__(8);
 
 /**
  * Create an instance of Axios
@@ -89650,14 +91090,14 @@ axios.create = function create(instanceConfig) {
 
 // Expose Cancel & CancelToken
 axios.Cancel = __webpack_require__(20);
-axios.CancelToken = __webpack_require__(108);
+axios.CancelToken = __webpack_require__(138);
 axios.isCancel = __webpack_require__(19);
 
 // Expose all/spread
 axios.all = function all(promises) {
   return Promise.all(promises);
 };
-axios.spread = __webpack_require__(109);
+axios.spread = __webpack_require__(139);
 
 module.exports = axios;
 
@@ -89666,7 +91106,7 @@ module.exports.default = axios;
 
 
 /***/ }),
-/* 93 */
+/* 123 */
 /***/ (function(module, exports) {
 
 /*!
@@ -89693,16 +91133,16 @@ function isSlowBuffer (obj) {
 
 
 /***/ }),
-/* 94 */
+/* 124 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
 
 
-var defaults = __webpack_require__(7);
-var utils = __webpack_require__(0);
-var InterceptorManager = __webpack_require__(103);
-var dispatchRequest = __webpack_require__(104);
+var defaults = __webpack_require__(8);
+var utils = __webpack_require__(3);
+var InterceptorManager = __webpack_require__(133);
+var dispatchRequest = __webpack_require__(134);
 
 /**
  * Create a new instance of Axios
@@ -89779,13 +91219,13 @@ module.exports = Axios;
 
 
 /***/ }),
-/* 95 */
+/* 125 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
 
 
-var utils = __webpack_require__(0);
+var utils = __webpack_require__(3);
 
 module.exports = function normalizeHeaderName(headers, normalizedName) {
   utils.forEach(headers, function processHeader(value, name) {
@@ -89798,7 +91238,7 @@ module.exports = function normalizeHeaderName(headers, normalizedName) {
 
 
 /***/ }),
-/* 96 */
+/* 126 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -89831,7 +91271,7 @@ module.exports = function settle(resolve, reject, response) {
 
 
 /***/ }),
-/* 97 */
+/* 127 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -89859,13 +91299,13 @@ module.exports = function enhanceError(error, config, code, request, response) {
 
 
 /***/ }),
-/* 98 */
+/* 128 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
 
 
-var utils = __webpack_require__(0);
+var utils = __webpack_require__(3);
 
 function encode(val) {
   return encodeURIComponent(val).
@@ -89932,13 +91372,13 @@ module.exports = function buildURL(url, params, paramsSerializer) {
 
 
 /***/ }),
-/* 99 */
+/* 129 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
 
 
-var utils = __webpack_require__(0);
+var utils = __webpack_require__(3);
 
 // Headers whose duplicates are ignored by node
 // c.f. https://nodejs.org/api/http.html#http_message_headers
@@ -89992,13 +91432,13 @@ module.exports = function parseHeaders(headers) {
 
 
 /***/ }),
-/* 100 */
+/* 130 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
 
 
-var utils = __webpack_require__(0);
+var utils = __webpack_require__(3);
 
 module.exports = (
   utils.isStandardBrowserEnv() ?
@@ -90067,7 +91507,7 @@ module.exports = (
 
 
 /***/ }),
-/* 101 */
+/* 131 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -90110,13 +91550,13 @@ module.exports = btoa;
 
 
 /***/ }),
-/* 102 */
+/* 132 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
 
 
-var utils = __webpack_require__(0);
+var utils = __webpack_require__(3);
 
 module.exports = (
   utils.isStandardBrowserEnv() ?
@@ -90170,13 +91610,13 @@ module.exports = (
 
 
 /***/ }),
-/* 103 */
+/* 133 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
 
 
-var utils = __webpack_require__(0);
+var utils = __webpack_require__(3);
 
 function InterceptorManager() {
   this.handlers = [];
@@ -90229,18 +91669,18 @@ module.exports = InterceptorManager;
 
 
 /***/ }),
-/* 104 */
+/* 134 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
 
 
-var utils = __webpack_require__(0);
-var transformData = __webpack_require__(105);
+var utils = __webpack_require__(3);
+var transformData = __webpack_require__(135);
 var isCancel = __webpack_require__(19);
-var defaults = __webpack_require__(7);
-var isAbsoluteURL = __webpack_require__(106);
-var combineURLs = __webpack_require__(107);
+var defaults = __webpack_require__(8);
+var isAbsoluteURL = __webpack_require__(136);
+var combineURLs = __webpack_require__(137);
 
 /**
  * Throws a `Cancel` if cancellation has been requested.
@@ -90322,13 +91762,13 @@ module.exports = function dispatchRequest(config) {
 
 
 /***/ }),
-/* 105 */
+/* 135 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
 
 
-var utils = __webpack_require__(0);
+var utils = __webpack_require__(3);
 
 /**
  * Transform the data for a request or a response
@@ -90349,7 +91789,7 @@ module.exports = function transformData(data, headers, fns) {
 
 
 /***/ }),
-/* 106 */
+/* 136 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -90370,7 +91810,7 @@ module.exports = function isAbsoluteURL(url) {
 
 
 /***/ }),
-/* 107 */
+/* 137 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -90391,7 +91831,7 @@ module.exports = function combineURLs(baseURL, relativeURL) {
 
 
 /***/ }),
-/* 108 */
+/* 138 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -90455,7 +91895,7 @@ module.exports = CancelToken;
 
 
 /***/ }),
-/* 109 */
+/* 139 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -90489,19 +91929,19 @@ module.exports = function spread(callback) {
 
 
 /***/ }),
-/* 110 */
+/* 140 */
 /***/ (function(module, exports, __webpack_require__) {
 
 var disposed = false
 function injectStyle (ssrContext) {
   if (disposed) return
-  __webpack_require__(111)
+  __webpack_require__(141)
 }
-var normalizeComponent = __webpack_require__(3)
+var normalizeComponent = __webpack_require__(2)
 /* script */
-var __vue_script__ = __webpack_require__(113)
+var __vue_script__ = __webpack_require__(143)
 /* template */
-var __vue_template__ = __webpack_require__(124)
+var __vue_template__ = __webpack_require__(154)
 /* template functional */
 var __vue_template_functional__ = false
 /* styles */
@@ -90540,17 +91980,17 @@ module.exports = Component.exports
 
 
 /***/ }),
-/* 111 */
+/* 141 */
 /***/ (function(module, exports, __webpack_require__) {
 
 // style-loader: Adds some css to the DOM by adding a <style> tag
 
 // load the styles
-var content = __webpack_require__(112);
+var content = __webpack_require__(142);
 if(typeof content === 'string') content = [[module.i, content, '']];
 if(content.locals) module.exports = content.locals;
 // add the styles to the DOM
-var update = __webpack_require__(2)("69ee1a8e", content, false, {});
+var update = __webpack_require__(1)("69ee1a8e", content, false, {});
 // Hot Module Replacement
 if(false) {
  // When the styles change, update the <style> tags
@@ -90566,10 +92006,10 @@ if(false) {
 }
 
 /***/ }),
-/* 112 */
+/* 142 */
 /***/ (function(module, exports, __webpack_require__) {
 
-exports = module.exports = __webpack_require__(1)(false);
+exports = module.exports = __webpack_require__(0)(false);
 // imports
 
 
@@ -90580,16 +92020,16 @@ exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", ""
 
 
 /***/ }),
-/* 113 */
+/* 143 */
 /***/ (function(module, __webpack_exports__, __webpack_require__) {
 
 "use strict";
 Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
-/* harmony import */ var __WEBPACK_IMPORTED_MODULE_0__Toolbar__ = __webpack_require__(114);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_0__Toolbar__ = __webpack_require__(144);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_0__Toolbar___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_0__Toolbar__);
-/* harmony import */ var __WEBPACK_IMPORTED_MODULE_1__AppFooter__ = __webpack_require__(119);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_1__AppFooter__ = __webpack_require__(149);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_1__AppFooter___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_1__AppFooter__);
-/* harmony import */ var __WEBPACK_IMPORTED_MODULE_2__login_Login__ = __webpack_require__(9);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_2__login_Login__ = __webpack_require__(10);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_2__login_Login___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_2__login_Login__);
 //
 //
@@ -90614,19 +92054,19 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
 });
 
 /***/ }),
-/* 114 */
+/* 144 */
 /***/ (function(module, exports, __webpack_require__) {
 
 var disposed = false
 function injectStyle (ssrContext) {
   if (disposed) return
-  __webpack_require__(115)
+  __webpack_require__(145)
 }
-var normalizeComponent = __webpack_require__(3)
+var normalizeComponent = __webpack_require__(2)
 /* script */
-var __vue_script__ = __webpack_require__(117)
+var __vue_script__ = __webpack_require__(147)
 /* template */
-var __vue_template__ = __webpack_require__(118)
+var __vue_template__ = __webpack_require__(148)
 /* template functional */
 var __vue_template_functional__ = false
 /* styles */
@@ -90665,17 +92105,17 @@ module.exports = Component.exports
 
 
 /***/ }),
-/* 115 */
+/* 145 */
 /***/ (function(module, exports, __webpack_require__) {
 
 // style-loader: Adds some css to the DOM by adding a <style> tag
 
 // load the styles
-var content = __webpack_require__(116);
+var content = __webpack_require__(146);
 if(typeof content === 'string') content = [[module.i, content, '']];
 if(content.locals) module.exports = content.locals;
 // add the styles to the DOM
-var update = __webpack_require__(2)("375d9c60", content, false, {});
+var update = __webpack_require__(1)("375d9c60", content, false, {});
 // Hot Module Replacement
 if(false) {
  // When the styles change, update the <style> tags
@@ -90691,10 +92131,10 @@ if(false) {
 }
 
 /***/ }),
-/* 116 */
+/* 146 */
 /***/ (function(module, exports, __webpack_require__) {
 
-exports = module.exports = __webpack_require__(1)(false);
+exports = module.exports = __webpack_require__(0)(false);
 // imports
 
 
@@ -90705,7 +92145,7 @@ exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\
 
 
 /***/ }),
-/* 117 */
+/* 147 */
 /***/ (function(module, __webpack_exports__, __webpack_require__) {
 
 "use strict";
@@ -90736,7 +92176,7 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
   name: 'Toolbar',
   data: function data() {
     return {
-      items: [{ title: 'Forum', to: '/forum', show: true }, { title: 'Ask Question', to: '/ask', show: User.loggedIn() }, { title: 'Category', to: '/category', show: User.loggedIn() }, { title: 'Login', to: '/login', show: !User.loggedIn() }, { title: 'Logout', to: '/logout', show: User.loggedIn() }]
+      items: [{ title: 'Forum', to: '/forum', show: true }, { title: 'Ask Question', to: '/ask', show: User.loggedIn() }, { title: 'Category', to: '/category', show: User.admin() }, { title: 'Login', to: '/login', show: !User.loggedIn() }, { title: 'Logout', to: '/logout', show: User.loggedIn() }]
     };
   },
   created: function created() {
@@ -90747,7 +92187,7 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
 });
 
 /***/ }),
-/* 118 */
+/* 148 */
 /***/ (function(module, exports, __webpack_require__) {
 
 var render = function() {
@@ -90794,19 +92234,19 @@ if (false) {
 }
 
 /***/ }),
-/* 119 */
+/* 149 */
 /***/ (function(module, exports, __webpack_require__) {
 
 var disposed = false
 function injectStyle (ssrContext) {
   if (disposed) return
-  __webpack_require__(120)
+  __webpack_require__(150)
 }
-var normalizeComponent = __webpack_require__(3)
+var normalizeComponent = __webpack_require__(2)
 /* script */
-var __vue_script__ = __webpack_require__(122)
+var __vue_script__ = __webpack_require__(152)
 /* template */
-var __vue_template__ = __webpack_require__(123)
+var __vue_template__ = __webpack_require__(153)
 /* template functional */
 var __vue_template_functional__ = false
 /* styles */
@@ -90845,17 +92285,17 @@ module.exports = Component.exports
 
 
 /***/ }),
-/* 120 */
+/* 150 */
 /***/ (function(module, exports, __webpack_require__) {
 
 // style-loader: Adds some css to the DOM by adding a <style> tag
 
 // load the styles
-var content = __webpack_require__(121);
+var content = __webpack_require__(151);
 if(typeof content === 'string') content = [[module.i, content, '']];
 if(content.locals) module.exports = content.locals;
 // add the styles to the DOM
-var update = __webpack_require__(2)("74976a86", content, false, {});
+var update = __webpack_require__(1)("74976a86", content, false, {});
 // Hot Module Replacement
 if(false) {
  // When the styles change, update the <style> tags
@@ -90871,10 +92311,10 @@ if(false) {
 }
 
 /***/ }),
-/* 121 */
+/* 151 */
 /***/ (function(module, exports, __webpack_require__) {
 
-exports = module.exports = __webpack_require__(1)(false);
+exports = module.exports = __webpack_require__(0)(false);
 // imports
 
 
@@ -90885,7 +92325,7 @@ exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", ""]);
 
 
 /***/ }),
-/* 122 */
+/* 152 */
 /***/ (function(module, __webpack_exports__, __webpack_require__) {
 
 "use strict";
@@ -90904,7 +92344,7 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
 });
 
 /***/ }),
-/* 123 */
+/* 153 */
 /***/ (function(module, exports, __webpack_require__) {
 
 var render = function() {
@@ -90934,7 +92374,7 @@ if (false) {
 }
 
 /***/ }),
-/* 124 */
+/* 154 */
 /***/ (function(module, exports, __webpack_require__) {
 
 var render = function() {
@@ -90964,35 +92404,36 @@ if (false) {
 }
 
 /***/ }),
-/* 125 */
+/* 155 */
 /***/ (function(module, exports) {
 
 // removed by extract-text-webpack-plugin
 
 /***/ }),
-/* 126 */,
-/* 127 */,
-/* 128 */,
-/* 129 */,
-/* 130 */
+/* 156 */,
+/* 157 */,
+/* 158 */,
+/* 159 */,
+/* 160 */,
+/* 161 */
 /***/ (function(module, exports, __webpack_require__) {
 
 var disposed = false
 function injectStyle (ssrContext) {
   if (disposed) return
-  __webpack_require__(131)
+  __webpack_require__(162)
 }
-var normalizeComponent = __webpack_require__(3)
+var normalizeComponent = __webpack_require__(2)
 /* script */
-var __vue_script__ = __webpack_require__(133)
+var __vue_script__ = __webpack_require__(164)
 /* template */
-var __vue_template__ = __webpack_require__(134)
+var __vue_template__ = __webpack_require__(165)
 /* template functional */
 var __vue_template_functional__ = false
 /* styles */
 var __vue_styles__ = injectStyle
 /* scopeId */
-var __vue_scopeId__ = "data-v-33056db5"
+var __vue_scopeId__ = "data-v-6aad93b4"
 /* moduleIdentifier (server only) */
 var __vue_module_identifier__ = null
 var Component = normalizeComponent(
@@ -91003,7 +92444,7 @@ var Component = normalizeComponent(
   __vue_scopeId__,
   __vue_module_identifier__
 )
-Component.options.__file = "resources/assets/js/components/forum/EditQuestion.vue"
+Component.options.__file = "resources/assets/js/components/reply/EditReply.vue"
 
 /* hot reload */
 if (false) {(function () {
@@ -91012,9 +92453,9 @@ if (false) {(function () {
   if (!hotAPI.compatible) return
   module.hot.accept()
   if (!module.hot.data) {
-    hotAPI.createRecord("data-v-33056db5", Component.options)
+    hotAPI.createRecord("data-v-6aad93b4", Component.options)
   } else {
-    hotAPI.reload("data-v-33056db5", Component.options)
+    hotAPI.reload("data-v-6aad93b4", Component.options)
   }
   module.hot.dispose(function (data) {
     disposed = true
@@ -91025,23 +92466,23 @@ module.exports = Component.exports
 
 
 /***/ }),
-/* 131 */
+/* 162 */
 /***/ (function(module, exports, __webpack_require__) {
 
 // style-loader: Adds some css to the DOM by adding a <style> tag
 
 // load the styles
-var content = __webpack_require__(132);
+var content = __webpack_require__(163);
 if(typeof content === 'string') content = [[module.i, content, '']];
 if(content.locals) module.exports = content.locals;
 // add the styles to the DOM
-var update = __webpack_require__(2)("e515428a", content, false, {});
+var update = __webpack_require__(1)("71240da6", content, false, {});
 // Hot Module Replacement
 if(false) {
  // When the styles change, update the <style> tags
  if(!content.locals) {
-   module.hot.accept("!!../../../../../node_modules/css-loader/index.js!../../../../../node_modules/vue-loader/lib/style-compiler/index.js?{\"vue\":true,\"id\":\"data-v-33056db5\",\"scoped\":true,\"hasInlineConfig\":true}!../../../../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./EditQuestion.vue", function() {
-     var newContent = require("!!../../../../../node_modules/css-loader/index.js!../../../../../node_modules/vue-loader/lib/style-compiler/index.js?{\"vue\":true,\"id\":\"data-v-33056db5\",\"scoped\":true,\"hasInlineConfig\":true}!../../../../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./EditQuestion.vue");
+   module.hot.accept("!!../../../../../node_modules/css-loader/index.js!../../../../../node_modules/vue-loader/lib/style-compiler/index.js?{\"vue\":true,\"id\":\"data-v-6aad93b4\",\"scoped\":true,\"hasInlineConfig\":true}!../../../../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./EditReply.vue", function() {
+     var newContent = require("!!../../../../../node_modules/css-loader/index.js!../../../../../node_modules/vue-loader/lib/style-compiler/index.js?{\"vue\":true,\"id\":\"data-v-6aad93b4\",\"scoped\":true,\"hasInlineConfig\":true}!../../../../../node_modules/vue-loader/lib/selector.js?type=styles&index=0!./EditReply.vue");
      if(typeof newContent === 'string') newContent = [[module.id, newContent, '']];
      update(newContent);
    });
@@ -91051,21 +92492,21 @@ if(false) {
 }
 
 /***/ }),
-/* 132 */
+/* 163 */
 /***/ (function(module, exports, __webpack_require__) {
 
-exports = module.exports = __webpack_require__(1)(false);
+exports = module.exports = __webpack_require__(0)(false);
 // imports
 
 
 // module
-exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", ""]);
+exports.push([module.i, "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", ""]);
 
 // exports
 
 
 /***/ }),
-/* 133 */
+/* 164 */
 /***/ (function(module, __webpack_exports__, __webpack_require__) {
 
 "use strict";
@@ -91084,52 +92525,27 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
 //
 //
 //
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
-//
 
 /* harmony default export */ __webpack_exports__["default"] = ({
-  name: 'EditQuestion',
-  props: ['data'],
-  data: function data() {
-    return {
-      form: {
-        title: null,
-        body: null
-      }
-    };
-  },
-
+  name: 'EditReply',
+  props: ['reply'],
   methods: {
-    cancel: function cancel() {
-      EventBus.$emit('cancelEditing');
-    },
     update: function update() {
       var _this = this;
 
-      axios.patch('/api/question/' + this.form.slug, this.form).then(function (res) {
+      axios.patch('/api/question/' + this.reply.question_slug + '/reply/' + this.reply.id, { body: this.reply.reply }).then(function (res) {
         return _this.cancel();
       });
+    },
+    cancel: function cancel() {
+      EventBus.$emit('cancelEditing');
     }
-  },
-  mounted: function mounted() {
-    this.form = this.data;
   }
+
 });
 
 /***/ }),
-/* 134 */
+/* 165 */
 /***/ (function(module, exports, __webpack_require__) {
 
 var render = function() {
@@ -91137,72 +92553,32 @@ var render = function() {
   var _h = _vm.$createElement
   var _c = _vm._self._c || _h
   return _c(
-    "v-container",
-    { attrs: { fluid: "" } },
+    "div",
     [
+      _c("markdown-editor", {
+        model: {
+          value: _vm.reply.reply,
+          callback: function($$v) {
+            _vm.$set(_vm.reply, "reply", $$v)
+          },
+          expression: "reply.reply"
+        }
+      }),
+      _vm._v(" "),
       _c(
-        "v-card",
+        "v-card-actions",
         [
           _c(
-            "v-form",
-            {
-              on: {
-                submit: function($event) {
-                  $event.preventDefault()
-                  return _vm.update($event)
-                }
-              }
-            },
-            [
-              _c("v-text-field", {
-                attrs: { label: "Title", type: "text", required: "" },
-                model: {
-                  value: _vm.form.title,
-                  callback: function($$v) {
-                    _vm.$set(_vm.form, "title", $$v)
-                  },
-                  expression: "form.title"
-                }
-              }),
-              _vm._v(" "),
-              _c("markdown-editor", {
-                attrs: { "preview-class": "markdown-body" },
-                model: {
-                  value: _vm.form.body,
-                  callback: function($$v) {
-                    _vm.$set(_vm.form, "body", $$v)
-                  },
-                  expression: "form.body"
-                }
-              }),
-              _vm._v(" "),
-              _c(
-                "v-card-actions",
-                [
-                  _c(
-                    "v-btn",
-                    { attrs: { icon: "", small: "", type: "submit" } },
-                    [
-                      _c("v-icon", { attrs: { color: "teal" } }, [
-                        _vm._v("save")
-                      ])
-                    ],
-                    1
-                  ),
-                  _vm._v(" "),
-                  _c(
-                    "v-btn",
-                    {
-                      attrs: { icon: "", small: "" },
-                      on: { click: _vm.cancel }
-                    },
-                    [_c("v-icon", [_vm._v("cancel")])],
-                    1
-                  )
-                ],
-                1
-              )
-            ],
+            "v-btn",
+            { attrs: { icon: "", small: "" }, on: { click: _vm.update } },
+            [_c("v-icon", { attrs: { color: "green" } }, [_vm._v("save")])],
+            1
+          ),
+          _vm._v(" "),
+          _c(
+            "v-btn",
+            { attrs: { icon: "", small: "" }, on: { click: _vm.cancel } },
+            [_c("v-icon", { attrs: { color: "black" } }, [_vm._v("cancel")])],
             1
           )
         ],
@@ -91218,7 +92594,7 @@ module.exports = { render: render, staticRenderFns: staticRenderFns }
 if (false) {
   module.hot.accept()
   if (module.hot.data) {
-    require("vue-hot-reload-api")      .rerender("data-v-33056db5", module.exports)
+    require("vue-hot-reload-api")      .rerender("data-v-6aad93b4", module.exports)
   }
 }
 
