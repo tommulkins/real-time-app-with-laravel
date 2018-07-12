@@ -10,6 +10,7 @@ import router from './router/router'
 import User from './helpers/User'
 import VueSimplemde from 'vue-simplemde'
 import md from 'marked'
+import Exception from './helpers/Exception'
 
 require('./bootstrap')
 
@@ -17,6 +18,7 @@ window.Vue = require('vue')
 window.User = User
 window.EventBus = new Vue()
 window.md = md
+window.Exception = Exception
 
 Vue.use(Vuetify)
 Vue.use(VueSimplemde)
