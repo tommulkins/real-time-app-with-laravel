@@ -38,6 +38,19 @@
               this.content.splice(index, 1)
             })
         })
+
+        Echo.private('App.User.' + User.id())
+          .notification((notification) => {
+            this.content.unshift(notification.reply)
+          });
+
+        Echo.channel('deleteReplyChannel')
+          .listen('DeleteReplyEvent', (e) => {
+            let index = this.content.findIndex(k => k.id === e.id)
+            if (index >= 0) {
+              this.content.splice(index, 1)
+            }
+          })
       }
     }
   }
