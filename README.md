@@ -6,7 +6,9 @@ You will need your own Pusher account and install in .env: https://www.pusher.co
 
 ## To install
 npm install
+
 php artisan migrate
+
 php artisan db:seed
 
 ## To run
