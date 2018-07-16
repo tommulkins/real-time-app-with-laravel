@@ -14,6 +14,7 @@ php artisan db:seed
 ## To run
 
 Laravel - php artisan serve
+
 Vue - npm run watch
 
 *  Will run on localhost:8000 by default.
